@@ -3,7 +3,8 @@
 //! mean to horizon-ctl. Four lines are its own: `launcher-start`, which lets the game load (it waits for the
 //! player to start it); `launcher-state`, which says whether the game waits to be started, is loading, waits
 //! for files or is at its title; `import PATH`, which installs an archive the launcher downloaded; and
-//! `launcher-world {json}`, Select World's actions for folders with spaces in their names.
+//! `launcher-world {json}`, Select World's actions for folders with spaces in their names; and
+//! `launcher-mod {json}`, the Mods page's install, list, switch and remove (`launcher_mods.rs`).
 //!
 //! The loading window answers the start, the state and imports before there is a `Game` to ask; anything else
 //! waits for the title.
@@ -128,6 +129,7 @@ impl Game<'_> {
                 "launcher-start" => request.answer(r#"{"ok":true}"#),
                 "launcher-session" => session_request(request),
                 "launcher-world" => self.launcher_world(request),
+                "launcher-mod" => mod_request(request),
                 _ => {
                     let (reply, answers) = mpsc::channel();
                     let line = request.line.clone();
@@ -214,6 +216,22 @@ fn world_files(request: horizon_ios_launcher::Request) -> Option<horizon_ios_lau
     };
     request.answer(&answer.to_string());
     None
+}
+
+/// `launcher-mod {json}`: the Mods page's files, checked and moved off the main thread (a 64 MiB mod is
+/// hashed and read as a zip), answered when the worker is done.
+fn mod_request(request: horizon_ios_launcher::Request) {
+    let args = super::launcher_mods::args(&request.line);
+    let home = std::env::current_dir().unwrap_or_default();
+    let (reply, answers) = mpsc::channel();
+    std::thread::spawn(move || {
+        let value = match super::launcher_mods::run(&home, &args) {
+            Ok(value) => value,
+            Err(e) => json!({ "error": e }),
+        };
+        let _ = reply.send(value.to_string());
+    });
+    PENDING.with_borrow_mut(|p| p.push((Waiting::Control(answers), request)));
 }
 
 /// `launcher-session {"name", "uuid", "access_token", "user_type": "msa", "xuid"}`: the Microsoft account the
@@ -360,6 +378,7 @@ impl Loading {
                     };
                     request.answer(&answer.to_string());
                 }
+                "launcher-mod" => mod_request(request),
                 "launcher-world" => {
                     if let Some(request) = world_files(request) {
                         request.answer(

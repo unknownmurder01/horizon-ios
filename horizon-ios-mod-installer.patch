@@ -1,0 +1,866 @@
+diff -ruN a/crates/horizon-client/src/game/launcher.rs b/crates/horizon-client/src/game/launcher.rs
+--- a/crates/horizon-client/src/game/launcher.rs	2026-10-31 16:28:41.673934784 +0000
++++ b/crates/horizon-client/src/game/launcher.rs	2026-10-31 16:28:41.675230150 +0000
+@@ -3,7 +3,8 @@
+ //! mean to horizon-ctl. Four lines are its own: `launcher-start`, which lets the game load (it waits for the
+ //! player to start it); `launcher-state`, which says whether the game waits to be started, is loading, waits
+ //! for files or is at its title; `import PATH`, which installs an archive the launcher downloaded; and
+-//! `launcher-world {json}`, Select World's actions for folders with spaces in their names.
++//! `launcher-world {json}`, Select World's actions for folders with spaces in their names; and
++//! `launcher-mod {json}`, the Mods page's install, list, switch and remove (`launcher_mods.rs`).
+ //!
+ //! The loading window answers the start, the state and imports before there is a `Game` to ask; anything else
+ //! waits for the title.
+@@ -128,6 +129,7 @@
+                 "launcher-start" => request.answer(r#"{"ok":true}"#),
+                 "launcher-session" => session_request(request),
+                 "launcher-world" => self.launcher_world(request),
++                "launcher-mod" => mod_request(request),
+                 _ => {
+                     let (reply, answers) = mpsc::channel();
+                     let line = request.line.clone();
+@@ -216,6 +218,22 @@
+     None
+ }
+ 
++/// `launcher-mod {json}`: the Mods page's files, checked and moved off the main thread (a 64 MiB mod is
++/// hashed and read as a zip), answered when the worker is done.
++fn mod_request(request: horizon_ios_launcher::Request) {
++    let args = super::launcher_mods::args(&request.line);
++    let home = std::env::current_dir().unwrap_or_default();
++    let (reply, answers) = mpsc::channel();
++    std::thread::spawn(move || {
++        let value = match super::launcher_mods::run(&home, &args) {
++            Ok(value) => value,
++            Err(e) => json!({ "error": e }),
++        };
++        let _ = reply.send(value.to_string());
++    });
++    PENDING.with_borrow_mut(|p| p.push((Waiting::Control(answers), request)));
++}
++
+ /// `launcher-session {"name", "uuid", "access_token", "user_type": "msa", "xuid"}`: the Microsoft account the
+ /// phone's launcher signed in (the session file's fields, docs/microsoft-account.md), kept in memory only;
+ /// `launcher-session off` plays offline again. The token is never echoed back.
+@@ -360,6 +378,7 @@
+                     };
+                     request.answer(&answer.to_string());
+                 }
++                "launcher-mod" => mod_request(request),
+                 "launcher-world" => {
+                     if let Some(request) = world_files(request) {
+                         request.answer(
+diff -ruN a/crates/horizon-client/src/game/launcher_mods.rs b/crates/horizon-client/src/game/launcher_mods.rs
+--- a/crates/horizon-client/src/game/launcher_mods.rs	1970-01-01 00:00:00.000000000 +0000
++++ b/crates/horizon-client/src/game/launcher_mods.rs	2026-10-31 16:28:41.691754305 +0000
+@@ -0,0 +1,330 @@
++//! `launcher-mod {json}`: the phone launcher's Mods page (packaging/ios/Launcher/Mods.swift), answered.
++//!
++//! The launcher downloads files; the game decides whether they are good. Everything that must be right
++//! is here, using the same checks as the desktop launcher (`horizon_mods::index::check_file`): the file's
++//! size and SHA-256 are the index's, it isn't revoked, its minisign signature matches the project's key,
++//! and its `horizon-mod.toml` says what the index says.
++//!
++//! Only content mods (`.hmod` made of data and assets) are installed. A registry file that carries code
++//! (any capability beyond `registries`) is refused: the game doesn't run it, and iOS could not load it
++//! anyway. Native mods (`.hnmod`) are built from source by the desktop launcher and are not offered.
++//!
++//! Actions (`action` in the JSON):
++//! - `install` `{id, index, file, version?}`: `index` is the downloaded `index.json`, `file` the downloaded
++//!   mod, both under the game folder; it is checked, moved to `horizon-mods/<id>.hmod` and turned on.
++//! - `list`: the mods in `horizon-mods/` with whether each is on.
++//! - `set` `{id, on}`: turn a mod on or off in `horizon-mods.txt`.
++//! - `remove` `{id}`: delete the mod and turn it off.
++//!
++//! The game reads its mods once, when it starts, so every answer says `restart: true`.
++use horizon_mods::{
++    Capability,
++    index::{self, Index, Kind, Trust},
++};
++use serde_json::{Value, json};
++use std::{
++    fs,
++    path::{Path, PathBuf},
++};
++
++/// Where the game keeps mods, beside `options.txt`.
++const MODS_DIR: &str = "horizon-mods";
++/// The switches: one `mod.<id>:true` line for each mod that is on.
++const MODS_LIST: &str = "horizon-mods.txt";
++/// The only folder the launcher may hand files from.
++const STAGING: &str = "mod-browser";
++
++/// `launcher-mod`'s arguments: the JSON after the word.
++pub(super) fn args(line: &str) -> Value {
++    line.trim_start()
++        .strip_prefix("launcher-mod")
++        .and_then(|rest| serde_json::from_str(rest).ok())
++        .unwrap_or_default()
++}
++
++/// Do what `args` asks in the game folder `home`.
++pub(super) fn run(home: &Path, args: &Value) -> Result<Value, String> {
++    let text = |key: &str| args[key].as_str().unwrap_or_default();
++    let id = text("id");
++    match text("action") {
++        "install" => install(home, id, text("version"), text("index"), text("file")),
++        "list" => list(home),
++        "set" => {
++            let on = args["on"].as_bool().ok_or("launcher-mod set needs \"on\"")?;
++            known(id)?;
++            set_enabled(home, id, on)?;
++            Ok(json!({ "ok": true, "id": id, "on": on, "restart": true }))
++        }
++        "remove" => remove(home, id),
++        other => Err(format!(
++            "launcher-mod: no action {other:?} (install, list, set, remove)"
++        )),
++    }
++}
++
++fn known(id: &str) -> Result<(), String> {
++    match index::valid_id(id) {
++        true => Ok(()),
++        false => Err(format!("{id:?} is not a mod id ([a-z0-9_], at most 64)")),
++    }
++}
++
++/// `path`, which must be a file inside the launcher's staging folder of `home`: the launcher is a
++/// separate program, and what it names is not trusted to be anywhere else.
++fn staged(home: &Path, path: &str) -> Result<PathBuf, String> {
++    let root = home
++        .join(STAGING)
++        .canonicalize()
++        .map_err(|_| "nothing was downloaded".to_owned())?;
++    let file = Path::new(path)
++        .canonicalize()
++        .map_err(|e| format!("{path}: {e}"))?;
++    match file.starts_with(&root) && file.is_file() {
++        true => Ok(file),
++        false => Err("that file isn't one the launcher downloaded".into()),
++    }
++}
++
++fn install(
++    home: &Path,
++    id: &str,
++    wanted: &str,
++    index_path: &str,
++    file_path: &str,
++) -> Result<Value, String> {
++    known(id)?;
++    let index_file = staged(home, index_path)?;
++    let file = staged(home, file_path)?;
++    let text = fs::read_to_string(&index_file).map_err(|e| format!("the mod index: {e}"))?;
++    let index = Index::parse(&text)?;
++    let project = index
++        .project(id)
++        .ok_or_else(|| format!("{id} isn't in Horizon's mod registry"))?;
++    if project.kind != Kind::Mod {
++        return Err(format!(
++            "{} is a {}, which this page doesn't install",
++            project.name,
++            project.kind.name()
++        ));
++    }
++    let version = match wanted {
++        "" => index
++            .installable(
++                project,
++                horizon_core::version::VERSION_ID,
++                horizon_mods::api_level::LEVEL,
++            )
++            .ok_or_else(|| {
++                format!(
++                    "{} has no version for Minecraft {}",
++                    project.name,
++                    horizon_core::version::VERSION_ID
++                )
++            })?,
++        wanted => project
++            .versions
++            .iter()
++            .find(|v| v.version == wanted)
++            .ok_or_else(|| format!("{} has no version {wanted}", project.name))?,
++    };
++    if version.game != horizon_core::version::VERSION_ID {
++        return Err(format!(
++            "{} {} is for Minecraft {}, not {}",
++            project.name,
++            version.version,
++            version.game,
++            horizon_core::version::VERSION_ID
++        ));
++    }
++    if needs_code(version) {
++        return Err(format!(
++            "{} {} carries code, which Horizon doesn't run on iPhone and iPad",
++            project.name, version.version
++        ));
++    }
++    if !version.file.name.ends_with(".hmod") {
++        return Err(format!("{} isn't a .hmod", version.file.name));
++    }
++    // The size, hash, revocation, signature and manifest checks of the desktop launcher.
++    let trust = index::check_file(&index, project, version, &file).inspect_err(|_| {
++        let _ = fs::remove_file(&file);
++    })?;
++
++    let dir = home.join(MODS_DIR);
++    if dir.join(id).exists() {
++        return Err(format!(
++            "A mod folder named {id} is already in {MODS_DIR}: move it away first."
++        ));
++    }
++    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
++    let target = dir.join(format!("{id}.hmod"));
++    fs::rename(&file, &target).map_err(|e| format!("{}: {e}", target.display()))?;
++    set_enabled(home, id, true)?;
++    Ok(json!({
++        "ok": true,
++        "id": id,
++        "name": project.name,
++        "version": version.version,
++        "trust": match trust { Trust::Verified => "verified", Trust::Unsigned => "unsigned" },
++        "restart": true,
++    }))
++}
++
++/// Whether a version carries code: any capability beyond adding blocks, items and effects.
++fn needs_code(version: &index::Version) -> bool {
++    version
++        .capabilities
++        .iter()
++        .any(|c| *c != Capability::Registries)
++}
++
++fn list(home: &Path) -> Result<Value, String> {
++    let dir = home.join(MODS_DIR);
++    let mut mods = Vec::new();
++    for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
++        let name = entry.file_name().to_string_lossy().into_owned();
++        if name.starts_with('.') {
++            continue;
++        }
++        let path = entry.path();
++        let (id, folder) = match name.strip_suffix(".hmod") {
++            Some(id) if path.is_file() => (id.to_owned(), false),
++            None if path.join("horizon-mod.toml").is_file() => (name.clone(), true),
++            _ => continue,
++        };
++        mods.push(json!({
++            "id": id,
++            "file": name,
++            "folder": folder,
++            "enabled": is_enabled(home, &id),
++        }));
++    }
++    mods.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
++    Ok(json!({ "mods": mods }))
++}
++
++fn remove(home: &Path, id: &str) -> Result<Value, String> {
++    known(id)?;
++    let dir = home.join(MODS_DIR);
++    let (file, folder) = (dir.join(format!("{id}.hmod")), dir.join(id));
++    if !file.is_file() && !folder.is_dir() {
++        return Err(format!("{id} isn't installed"));
++    }
++    // Off first: a failed delete then leaves a mod that is off, not one that is on and half gone.
++    set_enabled(home, id, false)?;
++    if file.is_file() {
++        fs::remove_file(&file).map_err(|e| format!("{}: {e}", file.display()))?;
++    }
++    if folder.is_dir() {
++        fs::remove_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
++    }
++    Ok(json!({ "ok": true, "id": id, "restart": true }))
++}
++
++/// Whether mod `id` is on in `horizon-mods.txt`.
++fn is_enabled(home: &Path, id: &str) -> bool {
++    let key = format!("mod.{id}");
++    fs::read_to_string(home.join(MODS_LIST))
++        .unwrap_or_default()
++        .lines()
++        .filter_map(|l| l.split_once(':'))
++        .any(|(k, v)| k.trim() == key && v.trim() == "true")
++}
++
++/// Turns mod `id` on (or off) in `horizon-mods.txt`, keeping every other line.
++fn set_enabled(home: &Path, id: &str, on: bool) -> Result<(), String> {
++    let path = home.join(MODS_LIST);
++    let text = fs::read_to_string(&path).unwrap_or_default();
++    let key = format!("mod.{id}");
++    let mut lines: Vec<String> = text
++        .lines()
++        .filter(|l| l.split_once(':').is_none_or(|(k, _)| k.trim() != key))
++        .map(str::to_owned)
++        .collect();
++    if on {
++        lines.push(format!("{key}:true"));
++    }
++    let mut out = lines.join("\n");
++    if !out.is_empty() {
++        out.push('\n');
++    }
++    fs::write(&path, out).map_err(|e| format!("{}: {e}", path.display()))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn home(name: &str) -> PathBuf {
++        let dir = std::env::temp_dir().join(format!("horizon-launcher-mods-{name}-{}", std::process::id()));
++        let _ = fs::remove_dir_all(&dir);
++        fs::create_dir_all(&dir).unwrap();
++        dir
++    }
++
++    #[test]
++    fn switches_keep_other_lines() {
++        let home = home("switch");
++        fs::write(home.join(MODS_LIST), "key.zoom.zoom:key.keyboard.c\nmod.a:true\n").unwrap();
++        set_enabled(&home, "b", true).unwrap();
++        set_enabled(&home, "a", false).unwrap();
++        assert_eq!(
++            fs::read_to_string(home.join(MODS_LIST)).unwrap(),
++            "key.zoom.zoom:key.keyboard.c\nmod.b:true\n"
++        );
++        assert!(is_enabled(&home, "b"));
++        assert!(!is_enabled(&home, "a"));
++    }
++
++    #[test]
++    fn lists_files_and_folders_and_removes_them() {
++        let home = home("list");
++        let dir = home.join(MODS_DIR);
++        fs::create_dir_all(dir.join("folder_mod")).unwrap();
++        fs::write(dir.join("folder_mod/horizon-mod.toml"), "").unwrap();
++        fs::write(dir.join("file_mod.hmod"), b"x").unwrap();
++        fs::write(dir.join("readme.txt"), b"x").unwrap();
++        set_enabled(&home, "file_mod", true).unwrap();
++        let listed = list(&home).unwrap();
++        let mods = listed["mods"].as_array().unwrap();
++        assert_eq!(mods.len(), 2);
++        assert_eq!(mods[0]["id"], "file_mod");
++        assert_eq!(mods[0]["enabled"], true);
++        assert_eq!(mods[1]["id"], "folder_mod");
++        assert_eq!(mods[1]["enabled"], false);
++        remove(&home, "file_mod").unwrap();
++        remove(&home, "folder_mod").unwrap();
++        assert!(list(&home).unwrap()["mods"].as_array().unwrap().is_empty());
++        assert!(!is_enabled(&home, "file_mod"));
++    }
++
++    #[test]
++    fn ids_cannot_name_paths() {
++        let home = home("ids");
++        for bad in ["", "../x", "a/b", "A", "x.hmod"] {
++            assert!(remove(&home, bad).is_err(), "{bad:?}");
++        }
++    }
++
++    #[test]
++    fn only_staged_files_are_installed() {
++        let home = home("staged");
++        fs::create_dir_all(home.join(STAGING)).unwrap();
++        let outside = home.join("elsewhere.hmod");
++        fs::write(&outside, b"x").unwrap();
++        assert!(staged(&home, outside.to_str().unwrap()).is_err());
++        let inside = home.join(STAGING).join("a.hmod");
++        fs::write(&inside, b"x").unwrap();
++        assert!(staged(&home, inside.to_str().unwrap()).is_ok());
++        let traversal = format!("{}/{STAGING}/../elsewhere.hmod", home.display());
++        assert!(staged(&home, &traversal).is_err());
++    }
++
++    #[test]
++    fn arguments_come_after_the_word() {
++        let a = args(r#"launcher-mod {"action":"set","id":"a","on":true}"#);
++        assert_eq!(a["action"], "set");
++        assert_eq!(a["on"], true);
++        assert!(args("launcher-mod nonsense").is_null());
++    }
++}
+diff -ruN a/crates/horizon-client/src/game.rs b/crates/horizon-client/src/game.rs
+--- a/crates/horizon-client/src/game.rs	2026-10-31 16:28:41.679362891 +0000
++++ b/crates/horizon-client/src/game.rs	2026-10-31 16:28:41.682108047 +0000
+@@ -156,6 +156,7 @@
+ mod lan_waypoints;
+ mod launch_api;
+ mod launcher;
++mod launcher_mods;
+ mod leads;
+ mod level_particles;
+ mod levels;
+diff -ruN a/packaging/ios/Launcher/Mods.swift b/packaging/ios/Launcher/Mods.swift
+--- a/packaging/ios/Launcher/Mods.swift	1970-01-01 00:00:00.000000000 +0000
++++ b/packaging/ios/Launcher/Mods.swift	2026-10-31 16:28:41.694763859 +0000
+@@ -0,0 +1,385 @@
++import SwiftUI
++
++/// A content mod in Horizon's registry that this phone can install: the newest version made for the game's
++/// Minecraft version, with no code in it.
++struct RegistryMod: Identifiable, Equatable {
++    let id: String
++    let name: String
++    let summary: String
++    let authors: [String]
++    let downloads: Int
++    let icon: URL?
++    let version: String
++    let file: URL
++    let size: Int64
++    let signed: Bool
++}
++
++/// A mod in the game's `horizon-mods` folder.
++struct InstalledMod: Identifiable, Equatable {
++    let id: String
++    var enabled: Bool
++}
++
++/// Horizon's mod registry (docs/api/mod-index.md): `index.json`, read here to list and download; the game
++/// (`launcher-mod`, crates/horizon-client/src/game/launcher_mods.rs) does the checking that matters before
++/// anything reaches `horizon-mods/`: size, SHA-256, revocation, the author's signature and the mod's own
++/// manifest. Nothing here is trusted to have decided that.
++@MainActor
++final class ModStore: ObservableObject {
++    @Published private(set) var mods: [RegistryMod] = []
++    @Published private(set) var installed: [InstalledMod] = []
++    @Published private(set) var loading = false
++    @Published private(set) var failed: String?
++    /// Mod ids being downloaded or checked.
++    @Published private(set) var working: Set<String> = []
++
++    typealias Request = @MainActor (String) async -> [String: Any]
++    private let request: Request
++    init(request: @escaping Request = { await Bridge.send($0) }) { self.request = request }
++
++    static let indexURL = URL(string: "https://horizon-rust.github.io/horizon-mods/index.json")!
++    /// The only folder the game takes files from (`STAGING` in launcher_mods.rs).
++    private static var staging: URL { GameFolder.documents.appendingPathComponent("mod-browser") }
++    private static let maxFile: Int64 = 64 << 20
++    private static let agent = "heyskylo/horizon-ios launcher (github.com/heyskylo/horizon-ios)"
++
++    // MARK: Registry
++
++    /// Download `index.json` and list its content mods made for `game`.
++    func refresh(game: String) async {
++        loading = true
++        failed = nil
++        defer { loading = false }
++        do {
++            try FileManager.default.createDirectory(at: Self.staging, withIntermediateDirectories: true)
++            var request = URLRequest(url: Self.indexURL)
++            request.setValue(Self.agent, forHTTPHeaderField: "User-Agent")
++            request.cachePolicy = .reloadRevalidatingCacheData
++            let (data, response) = try await URLSession.shared.data(for: request)
++            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
++                failed = "Horizon's mod registry didn't answer. Try again in a moment."
++                return
++            }
++            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
++                failed = "The mod registry's answer wasn't readable."
++                return
++            }
++            if let schema = json["schema"] as? Int, schema > 1 {
++                failed = "The mod registry has a newer format. Update Horizon."
++                return
++            }
++            try data.write(to: Self.indexFile, options: .atomic)
++            mods = Self.parse(json, game: game)
++        } catch {
++            failed = "Horizon's mod registry couldn't be read: \(error.localizedDescription)"
++        }
++    }
++
++    private static var indexFile: URL { staging.appendingPathComponent("horizon-index.json") }
++
++    /// What the page offers. The game checks every one again at install, so this only decides what is worth
++    /// showing: content mods (`mod`) for this game, with no code and not taken down.
++    static func parse(_ json: [String: Any], game: String) -> [RegistryMod] {
++        let revoked = (json["revoked"] as? [[String: Any]]) ?? []
++        func isRevoked(_ id: String, _ sha: String) -> Bool {
++            revoked.contains { entry in
++                entry["id"] as? String == id
++                    && ((entry["sha256"] as? String).map { $0.lowercased() == sha.lowercased() } ?? true)
++            }
++        }
++        let projects = (json["projects"] as? [[String: Any]]) ?? []
++        return projects.compactMap { project in
++            guard project["kind"] as? String == "mod",
++                  let id = project["id"] as? String, isModID(id),
++                  let name = project["name"] as? String,
++                  let versions = project["versions"] as? [[String: Any]]
++            else { return nil }
++            // Newest first, as the index lists them.
++            let version = versions.first { v in
++                guard v["game"] as? String == game,
++                      let file = v["file"] as? [String: Any],
++                      let sha = file["sha256"] as? String
++                else { return false }
++                let capabilities = (v["capabilities"] as? [String]) ?? []
++                return !isRevoked(id, sha) && capabilities.allSatisfy { $0 == "registries" }
++            }
++            guard let version, let number = version["version"] as? String,
++                  let file = version["file"] as? [String: Any],
++                  let fileName = file["name"] as? String, isPlain(fileName), fileName.hasSuffix(".hmod"),
++                  let address = (file["url"] as? String).flatMap(URL.init(string:)), isReleaseAsset(address),
++                  let size = (file["size"] as? NSNumber)?.int64Value, size > 0, size <= maxFile
++            else { return nil }
++            return RegistryMod(
++                id: id, name: name, summary: project["summary"] as? String ?? "",
++                authors: project["authors"] as? [String] ?? [],
++                downloads: project["downloads"] as? Int ?? 0,
++                icon: (project["icon"] as? String).flatMap(URL.init(string:)).flatMap { $0.scheme == "https" ? $0 : nil },
++                version: number, file: address, size: size, signed: project["key"] is String
++            )
++        }
++        .sorted { $0.downloads != $1.downloads ? $0.downloads > $1.downloads : $0.name < $1.name }
++    }
++
++    /// `[a-z0-9_]{1,64}`, the registry's id rule.
++    static func isModID(_ id: String) -> Bool {
++        !id.isEmpty && id.utf8.count <= 64
++            && id.utf8.allSatisfy { ($0 >= 97 && $0 <= 122) || ($0 >= 48 && $0 <= 57) || $0 == 95 }
++    }
++
++    private static func isPlain(_ part: String) -> Bool {
++        !part.isEmpty && part != "." && part != ".."
++            && part.utf8.allSatisfy {
++                ($0 >= 97 && $0 <= 122) || ($0 >= 65 && $0 <= 90) || ($0 >= 48 && $0 <= 57)
++                    || $0 == 45 || $0 == 95 || $0 == 46 || $0 == 43 || $0 == 37
++            }
++    }
++
++    /// `https://github.com/<owner>/<repo>/releases/download/<tag>/<name>`, the only shape the registry lists
++    /// (the same rule as the desktop launcher's).
++    static func isReleaseAsset(_ url: URL) -> Bool {
++        guard url.scheme == "https", url.host == "github.com", url.query == nil, url.fragment == nil else { return false }
++        let parts = url.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
++        guard parts.count == 7, parts[0].isEmpty, parts[3] == "releases", parts[4] == "download" else { return false }
++        return [parts[1], parts[2], parts[5], parts[6]].allSatisfy(isPlain)
++    }
++
++    // MARK: The game folder
++
++    func reloadInstalled() async -> String? {
++        let answer = await request("launcher-mod " + Self.json(["action": "list"]))
++        if let error = answer.error { return error }
++        let rows = (answer["mods"] as? [[String: Any]]) ?? []
++        installed = rows.compactMap { row in
++            guard let id = row["id"] as? String else { return nil }
++            return InstalledMod(id: id, enabled: row["enabled"] as? Bool ?? false)
++        }
++        return nil
++    }
++
++    func isInstalled(_ id: String) -> Bool { installed.contains { $0.id == id } }
++
++    /// Download `mod`, then ask the game to check it and put it in `horizon-mods/`.
++    func install(_ mod: RegistryMod) async -> Result<String, PackError> {
++        guard !working.contains(mod.id) else { return .failure(PackError("\(mod.name) is already being installed.")) }
++        working.insert(mod.id)
++        defer { working.remove(mod.id) }
++        do {
++            try FileManager.default.createDirectory(at: Self.staging, withIntermediateDirectories: true)
++            var request = URLRequest(url: mod.file)
++            request.setValue(Self.agent, forHTTPHeaderField: "User-Agent")
++            let (temporary, response) = try await URLSession.shared.download(for: request)
++            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
++                return .failure(PackError("GitHub refused the download of \(mod.name)."))
++            }
++            // Under the id alone: the game's index says which file it must be, by hash.
++            let staged = Self.staging.appendingPathComponent("\(mod.id).hmod")
++            try? FileManager.default.removeItem(at: staged)
++            try FileManager.default.moveItem(at: temporary, to: staged)
++            let line = "launcher-mod " + Self.json([
++                "action": "install", "id": mod.id, "version": mod.version,
++                "index": Self.indexFile.path, "file": staged.path,
++            ])
++            let answer = await self.request(line)
++            try? FileManager.default.removeItem(at: staged)
++            if let error = answer.error { return .failure(PackError(error)) }
++            if let error = await reloadInstalled() { return .failure(PackError(error)) }
++            let trust = answer["trust"] as? String == "verified" ? "Its author's signature checked out." : "It isn't signed by its author."
++            return .success("\(mod.name) \(mod.version) is installed and on. \(trust) Start the game again to use it.")
++        } catch {
++            return .failure(PackError(error.localizedDescription))
++        }
++    }
++
++    func set(_ id: String, on: Bool) async -> String? {
++        let answer = await request("launcher-mod " + Self.json(["action": "set", "id": id, "on": on]))
++        if let error = answer.error { return error }
++        return await reloadInstalled()
++    }
++
++    func remove(_ id: String) async -> String? {
++        let answer = await request("launcher-mod " + Self.json(["action": "remove", "id": id]))
++        if let error = answer.error { return error }
++        return await reloadInstalled()
++    }
++
++    /// The arguments as one line of JSON, so ids and paths with odd characters arrive whole.
++    private static func json(_ arguments: [String: Any]) -> String {
++        guard let data = try? JSONSerialization.data(withJSONObject: arguments),
++              let text = String(data: data, encoding: .utf8) else { return "{}" }
++        return text
++    }
++}
++
++// MARK: - The page
++
++/// The Packs page's Mods tab: Horizon's own content mods, from its registry.
++struct ModsSection: View {
++    @ObservedObject var link: GameLink
++    @StateObject private var store = ModStore()
++    @State private var query = ""
++    @State private var notice: String?
++
++    private var shown: [RegistryMod] {
++        let words = query.lowercased().split(separator: " ")
++        return store.mods.filter { mod in
++            let haystack = (mod.name + " " + mod.summary + " " + mod.id).lowercased()
++            return words.allSatisfy { haystack.contains($0) }
++        }
++    }
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: 16) {
++            installedSection
++            SectionHeader(title: "Horizon's mod registry")
++            Field(title: "SEARCH", placeholder: "Minimap, ruby…", text: $query, keyboard: .default)
++            if let failed = store.failed {
++                Label(failed, systemImage: "wifi.exclamationmark").font(Theme.sans(12)).foregroundStyle(Theme.warn)
++            }
++            if store.loading && store.mods.isEmpty {
++                ProgressView().tint(Theme.accentText).frame(maxWidth: .infinity).padding(24)
++            }
++            if !store.loading && store.failed == nil && shown.isEmpty {
++                EmptyNote(icon: "shippingbox", text: store.mods.isEmpty
++                    ? "No mods for Minecraft \(link.version) are listed yet."
++                    : "Nothing matches that search.")
++            }
++            VStack(spacing: 0) {
++                ForEach(shown) { mod in
++                    ModRow(mod: mod, working: store.working.contains(mod.id),
++                           installed: store.isInstalled(mod.id), canInstall: link.canList) {
++                        Task { await install(mod) }
++                    }
++                    if mod != shown.last {
++                        Divider().overlay(Theme.border).padding(.leading, 70)
++                    }
++                }
++            }
++            .card()
++            Text("Mods come from Horizon's registry and are checked against it before they are installed. Only mods made of blocks, items and data are offered: mods with code can't run on iPhone or iPad. The game reads mods when it starts.")
++                .font(Theme.sans(11)).foregroundStyle(Theme.textFaint)
++        }
++        .task { await store.refresh(game: link.version) }
++        .task(id: link.canList) {
++            if link.canList, let error = await store.reloadInstalled() { notice = error }
++        }
++        .alert("Mods", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
++            Button("OK", role: .cancel) {}
++        } message: {
++            Text(notice ?? "")
++        }
++    }
++
++    @ViewBuilder private var installedSection: some View {
++        SectionHeader(title: "Installed")
++        if store.installed.isEmpty {
++            EmptyNote(icon: "shippingbox", text: link.canList
++                ? "None yet. Find one below, or drop a .hmod into Horizon's horizon-mods folder in Files."
++                : "Installed mods show here in a moment.")
++        } else {
++            VStack(spacing: 0) {
++                ForEach(store.installed) { mod in
++                    HStack(spacing: 12) {
++                        Text(mod.id).font(Theme.sans(14)).foregroundStyle(Theme.text).lineLimit(2)
++                        Spacer(minLength: 8)
++                        Toggle("", isOn: Binding(
++                            get: { mod.enabled },
++                            set: { on in
++                                Haptics.tap()
++                                Task { if let error = await store.set(mod.id, on: on) { notice = error } }
++                            }
++                        ))
++                        .labelsHidden()
++                        .tint(Theme.accent)
++                        .disabled(!link.canList)
++                    }
++                    .padding(.horizontal, 14)
++                    .frame(minHeight: 50)
++                    .contextMenu {
++                        Button(role: .destructive) {
++                            Task { if let error = await store.remove(mod.id) { notice = error } }
++                        } label: { Label("Delete", systemImage: "trash") }
++                    }
++                    if mod != store.installed.last {
++                        Divider().overlay(Theme.border).padding(.leading, 14)
++                    }
++                }
++            }
++            .card()
++            Text("Switch a mod on to play with it; hold one to delete it. Changes apply the next time the game starts.")
++                .font(Theme.sans(11)).foregroundStyle(Theme.textFaint)
++        }
++    }
++
++    private func install(_ mod: RegistryMod) async {
++        Haptics.tap()
++        switch await store.install(mod) {
++        case let .success(said):
++            Haptics.done()
++            notice = said
++        case let .failure(error):
++            Haptics.failed()
++            notice = error.message
++        }
++    }
++}
++
++private struct ModRow: View {
++    let mod: RegistryMod
++    let working: Bool
++    let installed: Bool
++    let canInstall: Bool
++    let install: () -> Void
++
++    var body: some View {
++        HStack(alignment: .top, spacing: 12) {
++            AsyncImage(url: mod.icon) { image in
++                image.resizable().interpolation(.none).scaledToFill()
++            } placeholder: {
++                Theme.surfaceSunken
++            }
++            .frame(width: 46, height: 46)
++            .clipShape(RoundedRectangle(cornerRadius: 8))
++            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
++            VStack(alignment: .leading, spacing: 3) {
++                Text(mod.name).font(Theme.sans(15, .semiBold)).foregroundStyle(Theme.text).lineLimit(1)
++                Text(mod.summary).font(Theme.sans(11)).foregroundStyle(Theme.textMuted).lineLimit(2)
++                HStack(spacing: 6) {
++                    Text(mod.version)
++                    if !mod.authors.isEmpty {
++                        Text("·")
++                        Text("by \(mod.authors.joined(separator: ", "))")
++                    }
++                    if mod.downloads > 0 {
++                        Text("·")
++                        Text("\(mod.downloads.formatted(.number.notation(.compactName))) downloads")
++                    }
++                    if !mod.signed {
++                        Text("·")
++                        Text("unsigned").foregroundStyle(Theme.warn)
++                    }
++                }
++                .font(Theme.mono(9)).foregroundStyle(Theme.textFaint).lineLimit(1)
++            }
++            Spacer(minLength: 4)
++            Group {
++                if working {
++                    ProgressView().tint(Theme.accentText)
++                } else if installed {
++                    Image(systemName: "checkmark.circle.fill").font(.system(size: 26))
++                        .foregroundStyle(Theme.accentText)
++                        .accessibilityLabel("\(mod.name) is installed")
++                } else {
++                    Button(action: install) {
++                        Image(systemName: "arrow.down.circle.fill").font(.system(size: 26))
++                            .foregroundStyle(canInstall ? Theme.accentBright : Theme.textFaint)
++                    }
++                    .disabled(!canInstall)
++                    .accessibilityLabel("Install \(mod.name)")
++                }
++            }
++            .frame(width: 44, height: 44)
++        }
++        .padding(12)
++    }
++}
+diff -ruN a/packaging/ios/Launcher/Packs.swift b/packaging/ios/Launcher/Packs.swift
+--- a/packaging/ios/Launcher/Packs.swift	2026-10-31 16:28:41.687631154 +0000
++++ b/packaging/ios/Launcher/Packs.swift	2026-10-31 16:28:41.688723276 +0000
+@@ -300,16 +300,55 @@
+     @StateObject private var store = PackStore()
+     @StateObject private var choices = PackChoices()
+     @State private var kind = PackKind.resource
++    /// The Mods tab (Mods.swift) is beside the pack kinds, not one of them: mods are not a folder of zips.
++    @State private var showMods = false
+     @State private var query = ""
+     @State private var notice: String?
+ 
++    private enum Tab: Hashable {
++        case pack(PackKind)
++        case mods
++    }
++
+     var body: some View {
+         VStack(alignment: .leading, spacing: 16) {
+-            Picker("Kind", selection: $kind) {
+-                ForEach(PackKind.allCases) { Text($0.title).tag($0) }
++            Picker("Kind", selection: Binding<Tab>(
++                get: { showMods ? .mods : .pack(kind) },
++                set: { tab in
++                    switch tab {
++                    case .mods: showMods = true
++                    case let .pack(chosen): showMods = false; kind = chosen
++                    }
++                }
++            )) {
++                ForEach(PackKind.allCases) { Text($0.title).tag(Tab.pack($0)) }
++                Text("Mods").tag(Tab.mods)
+             }
+             .pickerStyle(.segmented)
+ 
++            if showMods {
++                ModsSection(link: link)
++            } else {
++                packsContent
++            }
++        }
++        .task(id: showMods ? "mods" : kind.rawValue) {
++            guard !showMods else { return }
++            store.reloadInstalled()
++            await store.search(kind, query: query)
++        }
++        .task(id: link.canList) {
++            if link.canList { await choices.load() }
++        }
++        .alert("Packs", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
++            Button("OK", role: .cancel) {}
++        } message: {
++            Text(notice ?? "")
++        }
++    }
++
++    @ViewBuilder private var packsContent: some View {
++        VStack(alignment: .leading, spacing: 16) {
+             installedSection
+             if let issue = choices.issue {
+                 Label(issue, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(Theme.warn)
+@@ -352,18 +391,6 @@
+             Text("Packs come from modrinth.com and their authors. Horizon is not affiliated with Modrinth.")
+                 .font(Theme.sans(11)).foregroundStyle(Theme.textFaint)
+         }
+-        .task(id: kind) {
+-            store.reloadInstalled()
+-            await store.search(kind, query: query)
+-        }
+-        .task(id: link.canList) {
+-            if link.canList { await choices.load() }
+-        }
+-        .alert("Packs", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
+-            Button("OK", role: .cancel) {}
+-        } message: {
+-            Text(notice ?? "")
+-        }
+     }
+ 
+     @ViewBuilder private var installedSection: some View {

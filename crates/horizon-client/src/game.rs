@@ -156,6 +156,7 @@ mod lan_vehicles;
 mod lan_waypoints;
 mod launch_api;
 mod launcher;
+mod launcher_mods;
 mod leads;
 mod level_particles;
 mod levels;

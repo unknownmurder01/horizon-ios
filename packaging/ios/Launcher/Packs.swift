@@ -300,16 +300,55 @@ struct PacksPage: View {
     @StateObject private var store = PackStore()
     @StateObject private var choices = PackChoices()
     @State private var kind = PackKind.resource
+    /// The Mods tab (Mods.swift) is beside the pack kinds, not one of them: mods are not a folder of zips.
+    @State private var showMods = false
     @State private var query = ""
     @State private var notice: String?
 
+    private enum Tab: Hashable {
+        case pack(PackKind)
+        case mods
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Picker("Kind", selection: $kind) {
-                ForEach(PackKind.allCases) { Text($0.title).tag($0) }
+            Picker("Kind", selection: Binding<Tab>(
+                get: { showMods ? .mods : .pack(kind) },
+                set: { tab in
+                    switch tab {
+                    case .mods: showMods = true
+                    case let .pack(chosen): showMods = false; kind = chosen
+                    }
+                }
+            )) {
+                ForEach(PackKind.allCases) { Text($0.title).tag(Tab.pack($0)) }
+                Text("Mods").tag(Tab.mods)
             }
             .pickerStyle(.segmented)
 
+            if showMods {
+                ModsSection(link: link)
+            } else {
+                packsContent
+            }
+        }
+        .task(id: showMods ? "mods" : kind.rawValue) {
+            guard !showMods else { return }
+            store.reloadInstalled()
+            await store.search(kind, query: query)
+        }
+        .task(id: link.canList) {
+            if link.canList { await choices.load() }
+        }
+        .alert("Packs", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(notice ?? "")
+        }
+    }
+
+    @ViewBuilder private var packsContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
             installedSection
             if let issue = choices.issue {
                 Label(issue, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(Theme.warn)
@@ -351,18 +390,6 @@ struct PacksPage: View {
             .card()
             Text("Packs come from modrinth.com and their authors. Horizon is not affiliated with Modrinth.")
                 .font(Theme.sans(11)).foregroundStyle(Theme.textFaint)
-        }
-        .task(id: kind) {
-            store.reloadInstalled()
-            await store.search(kind, query: query)
-        }
-        .task(id: link.canList) {
-            if link.canList { await choices.load() }
-        }
-        .alert("Packs", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(notice ?? "")
         }
     }
 
