@@ -621,7 +621,7 @@ impl super::CapabilitiesQuery {
     /// Query the capabilities of the device.
     pub fn new(device: &ProtocolObject<dyn MTLDevice>) -> Self {
         // There are four different OSes we can target: macOS, iOS, tvOS and
-        // visionOS. This can be detected using `cfg!(target_os = "ios")`, or
+        // visionOS. This can be detected using `cfg!(any(target_os = "ios", target_os = "tvos"))`, or
         // more conveniently using the `available!(...)` macro, which also
         // checks that the OS version that the binary is currently running on
         // is higher than or equal to the specified version.

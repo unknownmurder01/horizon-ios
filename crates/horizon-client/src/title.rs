@@ -1456,7 +1456,7 @@ impl Title {
                     ),
                     ("horizon.account", "Microsoft Account", 8, ACCOUNT_ICON),
                 ];
-                let icons = &icons[..if cfg!(target_os = "ios") { 3 } else { 4 }];
+                let icons = &icons[..if cfg!(any(target_os = "ios", target_os = "tvos")) { 3 } else { 4 }];
                 let start = cx - (icons.len() as f32 * 24.0 - 4.0) / 2.0;
                 for (i, &(key, plain, id, icon)) in icons.iter().enumerate() {
                     let mut button = b(
@@ -2827,11 +2827,11 @@ impl Title {
             (Mode::Main, Some(8)) => {
                 // iOS owns its account in the native launcher and Keychain. Opening a
                 // second device-code account here could leave the two identities out of sync.
-                #[cfg(target_os = "ios")]
+                #[cfg(any(target_os = "ios", target_os = "tvos"))]
                 {
                     Action::Quit
                 }
-                #[cfg(not(target_os = "ios"))]
+                #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
                 {
                     self.mode = Mode::Account;
                     Action::None
@@ -3618,8 +3618,8 @@ mod classic_tests {
             let buttons = title.buttons(w, h);
             let cx = (w / 2.0).floor();
             let y = (h / 4.0).floor() + 48.0;
-            let start = cx - if cfg!(target_os = "ios") { 34.0 } else { 46.0 };
-            assert_eq!(buttons.iter().any(|b| b.id == 8), !cfg!(target_os = "ios"));
+            let start = cx - if cfg!(any(target_os = "ios", target_os = "tvos")) { 34.0 } else { 46.0 };
+            assert_eq!(buttons.iter().any(|b| b.id == 8), !cfg!(any(target_os = "ios", target_os = "tvos")));
             for (id, x, enabled, icon) in [
                 (5, start, true, "friends/friends"),
                 (6, start + 24.0, true, "icon/language"),
@@ -3627,7 +3627,7 @@ mod classic_tests {
                 (8, start + 72.0, true, ACCOUNT_ICON),
             ]
             .into_iter()
-            .filter(|(id, _, _, _)| *id != 8 || !cfg!(target_os = "ios"))
+            .filter(|(id, _, _, _)| *id != 8 || !cfg!(any(target_os = "ios", target_os = "tvos")))
             {
                 let b = buttons.iter().find(|b| b.id == id).unwrap();
                 assert_eq!(
@@ -3638,7 +3638,7 @@ mod classic_tests {
                     title.click(x + 10.0, y + 82.0, (w, h)),
                     match id {
                         6 => (Action::Language, true),
-                        8 if cfg!(target_os = "ios") => (Action::Quit, true),
+                        8 if cfg!(any(target_os = "ios", target_os = "tvos")) => (Action::Quit, true),
                         8 => (Action::None, true),
                         7 => (Action::Accessibility, true),
                         _ => (Action::None, true),
@@ -3651,7 +3651,7 @@ mod classic_tests {
                     ));
                     title.mode = Mode::Main;
                 }
-                if id == 8 && !cfg!(target_os = "ios") {
+                if id == 8 && !cfg!(any(target_os = "ios", target_os = "tvos")) {
                     assert!(matches!(title.mode, Mode::Account));
                     title.mode = Mode::Main;
                 }

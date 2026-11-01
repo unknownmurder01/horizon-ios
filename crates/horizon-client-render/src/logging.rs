@@ -39,7 +39,7 @@ pub fn data_dir() -> PathBuf {
         if let Some(d) = env("APPDATA") {
             return d;
         }
-    } else if cfg!(any(target_os = "macos", target_os = "ios")) {
+    } else if cfg!(any(target_os = "macos", any(target_os = "ios", target_os = "tvos"))) {
         // iOS joins macOS here rather than falling through to the Unix branch below: an iPhone's `HOME` is
         // its app's data container, whose root will not take a new `.local` directory, while
         // `Library/Application Support` inside it is the standard writable place and is what a developer

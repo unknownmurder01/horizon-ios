@@ -40,7 +40,7 @@ pub struct Snapshot {
     pub triggers: [f32; 2],
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 mod ios {
     use super::{Controller, Snapshot};
     use objc2_game_controller::{
@@ -102,43 +102,43 @@ mod ios {
 
 /// Every controller iOS has paired.
 pub fn controllers() -> Vec<Controller> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     return ios::controllers();
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     Vec::new()
 }
 
 /// The pad that drives the game, read now: the one iOS last saw used, else the first with a full gamepad
 /// profile. `None` when no such pad is connected.
 pub fn active() -> Option<Snapshot> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     return ios::active();
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     None
 }
 
 /// Whether an external keyboard is currently attached (main-thread UIKit input use only).
 pub fn keyboard_connected() -> bool {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     // SAFETY: a read-only GameController class property, on the game's main thread.
     return unsafe { objc2_game_controller::GCKeyboard::coalescedKeyboard().is_some() };
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     false
 }
 
 /// Whether a hardware mouse is currently attached (main-thread UIKit input use only).
 pub fn mouse_connected() -> bool {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     // SAFETY: a read-only GameController class property, on the game's main thread.
     return unsafe { !objc2_game_controller::GCMouse::mice().is_empty() };
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     false
 }
 
 /// Read iPadOS/iOS text when a game edit shortcut explicitly requests paste.
 /// `None` means the caller is not on UIKit's main thread; no pasteboard access is attempted.
 pub fn clipboard_text() -> Option<String> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     {
         let _main = objc2::MainThreadMarker::new()?;
         let board = objc2_ui_kit::UIPasteboard::generalPasteboard();
@@ -146,13 +146,13 @@ pub fn clipboard_text() -> Option<String> {
         // is converted to owned text before returning to the caller.
         Some(unsafe { board.string() }.map_or_else(String::new, |s| s.to_string()))
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     None
 }
 
 /// Write text copied by the game to the iOS system pasteboard.
 pub fn set_clipboard_text(text: &str) {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     if let Some(_main) = objc2::MainThreadMarker::new() {
         let board = objc2_ui_kit::UIPasteboard::generalPasteboard();
         let text = objc2_foundation::NSString::from_str(text);
@@ -160,6 +160,6 @@ pub fn set_clipboard_text(text: &str) {
         // the call and UIPasteboard copies its value.
         unsafe { board.setString(Some(&text)) };
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     let _ = text;
 }

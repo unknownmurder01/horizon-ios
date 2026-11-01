@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The Apple TV game bundle's Info.plist: GameInfo.plist's counterpart for the HorizonTV target. Same executable name
+  and bundle identifier as the iPhone and iPad app (different platform, so they never collide, and it keeps
+  Universal Purchase possible), but none of the keys tvOS has no meaning for: no file sharing (an Apple TV has no
+  Files app), no orientations, no launch screen, no scene manifest (winit supplies its own UIApplicationDelegate,
+  as on iOS: naming one here would replace the delegate the game's window comes from).
+  No icon yet: tvOS wants layered brand assets (App Icon, App Icon Small, Top Shelf), which are a separate piece.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Horizon</string>
+	<key>CFBundleExecutable</key>
+	<string>Horizon</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.horizon.game</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Horizon</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<!-- Your own Azure app, never another launcher's. Empty here; .github/workflows/tvos.yml fills it from the
+	     repository variable HORIZON_MSA_CLIENT_ID. -->
+	<key>HorizonMSAClientID</key>
+	<string></string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>MinimumOSVersion</key>
+	<string>17.0</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Horizon is MIT licensed. Not an official Minecraft product; not approved by or associated with Mojang or Microsoft.</string>
+	<!-- Game files come from a link on the local network (http to local addresses only), as on iPhone. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Horizon looks for a computer on your network to receive your game files from, and for friends' worlds.</string>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>3</integer>
+	</array>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+		<string>metal</string>
+	</array>
+</dict>
+</plist>

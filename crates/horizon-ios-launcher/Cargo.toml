@@ -7,7 +7,7 @@ rust-version = "1.85"
 description = "Shows the SwiftUI launcher (packaging/ios/Launcher) over the game on iPhone and iPad"
 
 # Empty everywhere but iOS: the launcher is a Swift framework only an iOS bundle carries.
-[target.'cfg(target_os = "ios")'.dependencies]
+[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies]
 libc = "0.2"
 log = "0.4"
 

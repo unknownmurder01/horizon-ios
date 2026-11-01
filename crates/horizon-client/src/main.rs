@@ -28,7 +28,7 @@ static MOD_API_LEVEL: [u8; 27] = horizon_mods::api_level::MARK;
 /// executable first and then the `resources/` that `horizon_client::import` unpacks into this very
 /// folder -- so both the assets shipped in the bundle and the ones carried in by a player are found
 /// with no argument to pass.
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 fn into_app_sandbox() -> Result<std::path::PathBuf, String> {
     let documents = std::env::var_os("HOME")
         .filter(|home| !home.is_empty())
@@ -46,7 +46,7 @@ fn main() {
     horizon_airplay::register();
     horizon_airplay::audio::start();
     std::hint::black_box(&MOD_API_LEVEL);
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     let documents = match into_app_sandbox() {
         Ok(documents) => documents,
         Err(error) => {
@@ -85,13 +85,13 @@ fn main() {
         log::info!("Horizon {}", crash::version());
         crash::install(home.clone(), side);
         // The Microsoft account a last start kept (the title screen's face button), signed in again.
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
         if side == "client" {
             horizon_client::msa::restore(&home);
         }
     }
     // What a phone does with its files before the game looks for them, once the log can say so.
-    #[cfg(any(target_os = "ios", target_os = "android"))]
+    #[cfg(any(any(target_os = "ios", target_os = "tvos"), target_os = "android"))]
     if !help {
         // A swap that a flat battery or a crash left half done is finished, or the old tree put back,
         // before anything reads the folder it was working on.

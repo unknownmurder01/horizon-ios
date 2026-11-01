@@ -35,9 +35,9 @@ impl Game<'_> {
     pub(super) fn sync_ime(&mut self) {
         // UIKit keyboard visibility is owned by the mobile keyboard controls;
         // focusing chat alone must not reopen a keyboard the player hid.
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
         let want = self.system_keyboard_up();
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
         let want = self.text_field_focused();
         if want != self.ime_allowed
             && let Some(window) = &self.window

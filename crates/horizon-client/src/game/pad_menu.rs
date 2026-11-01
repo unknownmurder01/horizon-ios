@@ -121,7 +121,7 @@ impl Game<'_> {
     }
 
     /// iPad hardware keyboard navigation reuses the same registered targets as controllers.
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     pub(super) fn keyboard_menu_key(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -982,7 +982,7 @@ impl Game<'_> {
             // The next field to take the focus asks for the keyboard again.
             self.pad.menu.system_keyboard_hidden = false;
         }
-        let want = cfg!(target_os = "ios")
+        let want = cfg!(any(target_os = "ios", target_os = "tvos"))
             && focused
             && self.pad.menu.osk.is_none()
             && !self.pad.menu.system_keyboard_hidden;

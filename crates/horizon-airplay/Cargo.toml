@@ -10,7 +10,7 @@ description = "The game on an AirPlay display from iPhone and iPad, with the pho
 raw-window-handle = "0.6"
 
 # Empty everywhere but iOS: only a phone has an AirPlay screen of its own to give the game.
-[target.'cfg(target_os = "ios")'.dependencies]
+[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies]
 objc2 = "0.6.3"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSSet", "NSEnumerator", "NSString", "NSArray", "objc2-core-foundation"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes"] }

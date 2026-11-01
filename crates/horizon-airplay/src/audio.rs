@@ -7,11 +7,11 @@
 
 /// Set the session up: once, before the game opens its audio stream. Nothing elsewhere.
 pub fn start() {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     ios::start();
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 mod ios {
     use objc2::msg_send;
     use objc2::runtime::{AnyClass, AnyObject, Bool};

@@ -377,7 +377,7 @@ impl Cps {
     }
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 mod desktop_ui {
     use super::*;
     /// The settings the Extras page shows, one per row.
@@ -543,15 +543,15 @@ mod desktop_ui {
         }
     }
 }
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 pub use desktop_ui::{Item, rows};
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 mod mobile_ui;
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 pub use mobile_ui::{Item, rows};
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 mod native_ios;
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 pub use native_ios::{
     ZOOM_KEY, ZOOM_LEVELS, ZOOM_MAX, ZOOM_MIN, Zoom, turn_scale, zoom_key_conflicts,
 };

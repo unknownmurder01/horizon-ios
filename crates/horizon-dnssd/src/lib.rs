@@ -5,10 +5,10 @@
 //! phone's name servers. The protocol forbids `unsafe`, so the C calls live here and it sees plain bytes.
 //! Elsewhere there is nothing in the crate.
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 pub use ios::{TIMEOUT, query_srv};
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 mod ios {
     use std::{
         ffi::{CString, c_char, c_int, c_void},

@@ -1,0 +1,1521 @@
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/.github/workflows/tvos.yml /home/claude/w/horizon-ios-main/.github/workflows/tvos.yml
+--- a/.github/workflows/tvos.yml	1970-01-01 00:00:00.000000000 +0000
++++ b/.github/workflows/tvos.yml	2026-11-01 11:45:49.857278351 +0000
+@@ -0,0 +1,119 @@
++name: tvos
++# The game for Apple TV, and nothing else: its own workflow, so it never gates or delays ios.yml (iPhone and iPad).
++# The Rust game is cross-compiled for aarch64-apple-tvos, wrapped by packaging/ios/project.yml's HorizonTV target,
++# and uploaded as an unsigned .ipa. No tests run here.
++#
++# This target is new and Rust treats tvOS as tier 3: there is no prebuilt standard library, so the build uses
++# nightly and -Zbuild-std. Expect it to need work on a dependency or two before it goes green; the cargo log is
++# uploaded whether or not it succeeds, so each run says exactly what is left.
++on:
++  push:
++    branches: [main]
++  workflow_dispatch:
++  pull_request:
++    branches: [main]
++permissions:
++  contents: read
++concurrency:
++  group: tvos-${{ github.sha }}
++  cancel-in-progress: false
++env:
++  HORIZON_TELEMETRY_URL: "off"
++  TVOS_TARGET: aarch64-apple-tvos
++  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
++  CARGO_PROFILE_RELEASE_LTO: "false"
++  CARGO_INCREMENTAL: "0"
++  # The app's own minimum (project.yml); rustc and cc read it.
++  TVOS_DEPLOYMENT_TARGET: "17.0"
++
++jobs:
++  ipa:
++    runs-on: ${{ github.event_name == 'pull_request' && 'macos-26' || vars.MAC_RUNNER || 'macos-26' }}
++    timeout-minutes: 120
++    defaults:
++      run:
++        shell: bash
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          persist-credentials: false
++      - name: Check the Apple toolchain
++        run: |
++          set -euo pipefail
++          xcodebuild -version
++          echo "AppleTVOS SDK: $(xcrun --sdk appletvos --show-sdk-version)"
++      # Nightly with rust-src: tier 3 targets have no rust-std to download, so -Zbuild-std compiles the
++      # standard library from source for them.
++      - uses: dtolnay/rust-toolchain@nightly
++        with:
++          components: rust-src
++      - uses: Swatinem/rust-cache@v2
++        if: runner.environment == 'github-hosted'
++        with:
++          shared-key: tvos-${{ env.TVOS_TARGET }}
++      - name: Build the game
++        env:
++          HORIZON_MSA_CLIENT_ID: ${{ vars.HORIZON_MSA_CLIENT_ID }}
++        # No --locked: -Zbuild-std resolves the standard library's own dependencies, which the repository's
++        # Cargo.lock cannot pin. The workspace's own dependencies are unchanged by this.
++        # No `audio` feature yet: cpal's CoreAudio backend is built for macOS and iOS, and tvOS is the next thing
++        # to check once this compiles.
++        run: |
++          set -o pipefail
++          cargo +nightly build -Zbuild-std=std,panic_abort --release --target "$TVOS_TARGET" \
++            -p horizon-client --no-default-features 2>&1 | tee cargo-tvos.log
++      - name: Preserve the cargo log
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: tvos-cargo-log
++          path: cargo-tvos.log
++          retention-days: 7
++          if-no-files-found: ignore
++      - name: Bundle it
++        env:
++          HORIZON_MSA_CLIENT_ID: ${{ vars.HORIZON_MSA_CLIENT_ID }}
++        run: |
++          set -euo pipefail
++          command -v xcodegen >/dev/null || brew install xcodegen
++          ( cd packaging/ios && xcodegen generate )
++          HORIZON_GAME_PREBUILT=1 xcodebuild -project packaging/ios/HorizonIOS.xcodeproj \
++            -target HorizonTV -configuration Release -sdk appletvos -arch arm64 \
++            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO \
++            DEBUG_INFORMATION_FORMAT=dwarf \
++            CONFIGURATION_BUILD_DIR="$PWD/build-tvos" \
++            build > xcode-tvos-build.log 2>&1 || { tail -60 xcode-tvos-build.log; exit 1; }
++          python3 - <<'PYCONFIG'
++          import os, plistlib
++          path = 'build-tvos/HorizonTV.app/Info.plist'
++          with open(path, 'rb') as file:
++              info = plistlib.load(file)
++          info['HorizonMSAClientID'] = os.environ.get('HORIZON_MSA_CLIENT_ID', '')
++          with open(path, 'wb') as file:
++              plistlib.dump(info, file)
++          PYCONFIG
++          rm -rf tv-xcode && mkdir -p tv-xcode/Payload
++          cp -a build-tvos/HorizonTV.app tv-xcode/Payload/
++          ( cd tv-xcode && zip -qry ../Horizon-tvos-unsigned.ipa Payload )
++      - name: Preserve the Xcode failure log
++        if: failure()
++        uses: actions/upload-artifact@v4
++        with:
++          name: tvos-xcode-failure-log
++          path: xcode-tvos-build.log
++          retention-days: 7
++          if-no-files-found: ignore
++      - name: Check the distributable contains no prepared assets
++        run: |
++          python3 - <<'PYASSETS'
++          import zipfile
++          with zipfile.ZipFile('Horizon-tvos-unsigned.ipa') as ipa:
++              if any('horizon-resources.json' in name for name in ipa.namelist()):
++                  raise SystemExit('::error::the .ipa carries prepared vanilla assets; refusing to publish it')
++          PYASSETS
++      - uses: actions/upload-artifact@v4
++        with:
++          name: horizon-tvos-game
++          path: Horizon-tvos-unsigned.ipa
++          retention-days: 7
++          if-no-files-found: error
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-airplay/Cargo.toml /home/claude/w/horizon-ios-main/crates/horizon-airplay/Cargo.toml
+--- a/crates/horizon-airplay/Cargo.toml	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-airplay/Cargo.toml	2026-11-01 11:45:09.245085158 +0000
+@@ -10,7 +10,7 @@
+ raw-window-handle = "0.6"
+ 
+ # Empty everywhere but iOS: only a phone has an AirPlay screen of its own to give the game.
+-[target.'cfg(target_os = "ios")'.dependencies]
++[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies]
+ objc2 = "0.6.3"
+ objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSSet", "NSEnumerator", "NSString", "NSArray", "objc2-core-foundation"] }
+ objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-airplay/src/audio.rs /home/claude/w/horizon-ios-main/crates/horizon-airplay/src/audio.rs
+--- a/crates/horizon-airplay/src/audio.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-airplay/src/audio.rs	2026-11-01 11:45:09.248477576 +0000
+@@ -7,11 +7,11 @@
+ 
+ /// Set the session up: once, before the game opens its audio stream. Nothing elsewhere.
+ pub fn start() {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     ios::start();
+ }
+ 
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ mod ios {
+     use objc2::msg_send;
+     use objc2::runtime::{AnyClass, AnyObject, Bool};
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-airplay/src/lib.rs /home/claude/w/horizon-ios-main/crates/horizon-airplay/src/lib.rs
+--- a/crates/horizon-airplay/src/lib.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-airplay/src/lib.rs	2026-11-01 11:45:09.248723550 +0000
+@@ -26,36 +26,36 @@
+     pub id: u64,
+     /// The view's size in pixels.
+     pub size: (u32, u32),
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     view: std::ptr::NonNull<std::ffi::c_void>,
+ }
+ 
+ // SAFETY: the view is only handed to wgpu, which reads it on the main thread when it makes the surface, and
+ // `ios::STATE` keeps it alive while the display is connected.
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ unsafe impl Send for Screen {}
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ unsafe impl Sync for Screen {}
+ 
+ impl HasWindowHandle for Screen {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+         let handle = raw_window_handle::UiKitWindowHandle::new(self.view);
+         // SAFETY: the view is alive for as long as this display is connected (see `Screen`).
+         Ok(unsafe { WindowHandle::borrow_raw(handle.into()) })
+     }
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+         Err(HandleError::Unavailable)
+     }
+ }
+ 
+ impl HasDisplayHandle for Screen {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+         Ok(DisplayHandle::uikit())
+     }
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+         Err(HandleError::Unavailable)
+     }
+@@ -73,7 +73,7 @@
+ 
+ /// Make the scene delegate's class known before iOS asks for it by name: call it before the event loop.
+ pub fn register() {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     ios::register();
+ }
+ 
+@@ -81,9 +81,9 @@
+ /// `split`. Called every frame: `cover_phone` says whether the phone shows the cover over everything (while
+ /// the game draws on the display) or what is under it (the launcher, which needs its touches).
+ pub fn screen(cover_phone: bool, split: bool) -> Option<Screen> {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     return ios::screen(cover_phone, split);
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     {
+         let _ = (cover_phone, split);
+         None
+@@ -92,31 +92,31 @@
+ 
+ /// The second player's view: the bottom half, while [`screen`] splits the display.
+ pub fn second_screen() -> Option<Screen> {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     return ios::second_screen();
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     None
+ }
+ 
+ /// The phone shows the game under its cover: splitscreen's second player's menus, which they tap there.
+ /// Called every frame in splitscreen; off again when it ends.
+ pub fn phone_shows_game(on: bool) {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     ios::phone_shows_game(on);
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     let _ = on;
+ }
+ 
+ /// The second player's touch controls on the phone, which then lets its touches through to the game; `None`
+ /// takes them away and the cover takes the touches again.
+ pub fn phone_controls(buttons: Option<&[Button]>) {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     ios::phone_controls(buttons);
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     let _ = buttons;
+ }
+ 
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ mod ios {
+     use super::{Button, Screen};
+     use objc2::rc::Retained;
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client/src/extras_hud.rs /home/claude/w/horizon-ios-main/crates/horizon-client/src/extras_hud.rs
+--- a/crates/horizon-client/src/extras_hud.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client/src/extras_hud.rs	2026-11-01 11:45:09.265861413 +0000
+@@ -142,7 +142,7 @@
+     }
+ }
+ 
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ mod native_ios;
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ pub use native_ios::{Keystrokes, draw_fps, draw_keystrokes, fps_text, keystrokes_size};
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client/src/game/clipboard.rs /home/claude/w/horizon-ios-main/crates/horizon-client/src/game/clipboard.rs
+--- a/crates/horizon-client/src/game/clipboard.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client/src/game/clipboard.rs	2026-11-01 11:45:09.286074145 +0000
+@@ -15,7 +15,7 @@
+         let m = self.modifiers;
+         let held = |keys: [KeyCode; 2]| keys.iter().any(|k| self.keys.contains(k));
+         // InputQuirks.EDIT_SHORTCUT_KEY_MODIFIER: Cmd on macOS, Ctrl elsewhere.
+-        let edit = if cfg!(any(target_os = "macos", target_os = "ios")) {
++        let edit = if cfg!(any(target_os = "macos", any(target_os = "ios", target_os = "tvos"))) {
+             m.super_key() || held([KeyCode::SuperLeft, KeyCode::SuperRight])
+         } else {
+             m.control_key() || held([KeyCode::ControlLeft, KeyCode::ControlRight])
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client/src/game/ime.rs /home/claude/w/horizon-ios-main/crates/horizon-client/src/game/ime.rs
+--- a/crates/horizon-client/src/game/ime.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client/src/game/ime.rs	2026-11-01 11:45:09.279176028 +0000
+@@ -35,9 +35,9 @@
+     pub(super) fn sync_ime(&mut self) {
+         // UIKit keyboard visibility is owned by the mobile keyboard controls;
+         // focusing chat alone must not reopen a keyboard the player hid.
+-        #[cfg(target_os = "ios")]
++        #[cfg(any(target_os = "ios", target_os = "tvos"))]
+         let want = self.system_keyboard_up();
+-        #[cfg(not(target_os = "ios"))]
++        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+         let want = self.text_field_focused();
+         if want != self.ime_allowed
+             && let Some(window) = &self.window
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client/src/game/pad.rs /home/claude/w/horizon-ios-main/crates/horizon-client/src/game/pad.rs
+--- a/crates/horizon-client/src/game/pad.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client/src/game/pad.rs	2026-11-01 11:45:09.283925660 +0000
+@@ -26,7 +26,7 @@
+ #[derive(Default)]
+ pub(super) struct Pads {
+     /// The real controllers and the DualSense's output.
+-    #[cfg(any(feature = "controllers", target_os = "ios"))]
++    #[cfg(any(feature = "controllers", any(target_os = "ios", target_os = "tvos")))]
+     devices: hardware::Devices,
+     /// The virtual pad of `horizon-ctl pad`.
+     injected: PadState,
+@@ -53,17 +53,17 @@
+     health: HealthWatch,
+ }
+ 
+-#[cfg(all(feature = "controllers", not(target_os = "ios")))]
++#[cfg(all(feature = "controllers", not(any(target_os = "ios", target_os = "tvos"))))]
+ mod hardware;
+ 
+ /// iPhone and iPad: GameController, whichever features the build has (gilrs has no iOS backend).
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ #[path = "pad/ios.rs"]
+ mod hardware;
+ 
+ /// A build without the `controllers` feature (the server build, which must not need libudev): no
+ /// hardware pads, only `horizon-ctl pad`'s virtual one.
+-#[cfg(not(any(feature = "controllers", target_os = "ios")))]
++#[cfg(not(any(feature = "controllers", any(target_os = "ios", target_os = "tvos"))))]
+ mod hardware {
+     use super::{super::Game, Pads};
+     use horizon_client::gamepad::{PadState, Pulse, Rumble};
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client/src/game/pad_menu.rs /home/claude/w/horizon-ios-main/crates/horizon-client/src/game/pad_menu.rs
+--- a/crates/horizon-client/src/game/pad_menu.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client/src/game/pad_menu.rs	2026-11-01 11:45:09.283486725 +0000
+@@ -121,7 +121,7 @@
+     }
+ 
+     /// iPad hardware keyboard navigation reuses the same registered targets as controllers.
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     pub(super) fn keyboard_menu_key(
+         &mut self,
+         event_loop: &ActiveEventLoop,
+@@ -982,7 +982,7 @@
+             // The next field to take the focus asks for the keyboard again.
+             self.pad.menu.system_keyboard_hidden = false;
+         }
+-        let want = cfg!(target_os = "ios")
++        let want = cfg!(any(target_os = "ios", target_os = "tvos"))
+             && focused
+             && self.pad.menu.osk.is_none()
+             && !self.pad.menu.system_keyboard_hidden;
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client/src/game/startup_menu.rs /home/claude/w/horizon-ios-main/crates/horizon-client/src/game/startup_menu.rs
+--- a/crates/horizon-client/src/game/startup_menu.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client/src/game/startup_menu.rs	2026-11-01 11:45:09.284746987 +0000
+@@ -143,7 +143,7 @@
+     }
+ 
+     fn shortcut(&mut self, event: &KeyEvent) -> Option<clipboard::EditShortcut> {
+-        let edit = if cfg!(any(target_os = "macos", target_os = "ios")) {
++        let edit = if cfg!(any(target_os = "macos", any(target_os = "ios", target_os = "tvos"))) {
+             self.modifiers.super_key()
+         } else {
+             self.modifiers.control_key()
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client/src/game/touch.rs /home/claude/w/horizon-ios-main/crates/horizon-client/src/game/touch.rs
+--- a/crates/horizon-client/src/game/touch.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client/src/game/touch.rs	2026-11-01 11:45:09.285327482 +0000
+@@ -157,7 +157,7 @@
+         // splitscreen's second player, whose controller the phone is.
+         (!self.on_airplay() || self.splitscreen.guest)
+             && (self.touch.seen
+-                || cfg!(any(target_os = "ios", target_os = "android"))
++                || cfg!(any(any(target_os = "ios", target_os = "tvos"), target_os = "android"))
+                 || std::env::var_os("HORIZON_TOUCH").is_some_and(|v| v == "1"))
+     }
+ 
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client/src/game.rs /home/claude/w/horizon-ios-main/crates/horizon-client/src/game.rs
+--- a/crates/horizon-client/src/game.rs	2026-11-01 11:46:00.611350557 +0000
++++ b/crates/horizon-client/src/game.rs	2026-11-01 11:45:09.271811390 +0000
+@@ -105,9 +105,9 @@
+ mod events;
+ mod execution_role;
+ mod explosion;
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ mod extras;
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ #[path = "game/extras_ios.rs"]
+ mod extras;
+ mod falling_damage;
+@@ -521,7 +521,7 @@
+         // On a phone, the folder an import unpacked into `Documents` is the one a player can reach. On
+         // Linux, the game files a start downloaded live in the game's home (`import::home`). A desktop
+         // without them gives the answer it has always given.
+-        let sandbox = if cfg!(any(target_os = "ios", target_os = "android")) {
++        let sandbox = if cfg!(any(any(target_os = "ios", target_os = "tvos"), target_os = "android")) {
+             std::env::current_dir().ok()
+         } else if cfg!(target_os = "linux") {
+             Some(horizon_client::import::home())
+@@ -6848,7 +6848,7 @@
+     /// `Minecraft.pauseIfInactive`: a window without focus for more than 500 ms
+     /// pauses the game. An open screen (books, signs, the pack prompt, a server
+     /// dialog) stays instead of pausing (`Gui.setPauseScreen`).
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     fn pause_if_inactive(&mut self) {
+         if self
+             .focus_lost
+@@ -6929,7 +6929,7 @@
+         // screen's quick move and clicks.
+         self.reset_inventory_clicks();
+         if !capture {
+-            #[cfg(target_os = "ios")]
++            #[cfg(any(target_os = "ios", target_os = "tvos"))]
+             {
+                 self.left = false;
+                 self.right = false;
+@@ -14599,7 +14599,7 @@
+             ));
+             return;
+         }
+-        #[cfg(target_os = "ios")]
++        #[cfg(any(target_os = "ios", target_os = "tvos"))]
+         {
+             // UIKit pointer lock is a gameplay request; every overlay/text field releases it.
+             let want = self.focused
+@@ -14616,7 +14616,7 @@
+             }
+         }
+         self.poll_pads(event_loop);
+-        #[cfg(not(target_os = "ios"))]
++        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+         self.pause_if_inactive();
+         if !self.splitscreen.active {
+             self.sync_system_keyboard();
+@@ -14855,7 +14855,7 @@
+             return;
+         }
+         let result: Result<()> = (|| {
+-            #[cfg(target_os = "ios")]
++            #[cfg(any(target_os = "ios", target_os = "tvos"))]
+             if let WindowEvent::KeyboardInput { event, .. } = &event
+                 && event.state == ElementState::Pressed
+                 && let PhysicalKey::Code(key) = event.physical_key
+@@ -14865,7 +14865,7 @@
+             }
+             // A field or menu may have opened since key-down. Release the translated binding
+             // before that screen consumes it, including keys rebound to mouse actions.
+-            #[cfg(target_os = "ios")]
++            #[cfg(any(target_os = "ios", target_os = "tvos"))]
+             if let WindowEvent::KeyboardInput { event, .. } = &event
+                 && event.state == ElementState::Released
+                 && let PhysicalKey::Code(key) = event.physical_key
+@@ -15520,7 +15520,7 @@
+                     let PhysicalKey::Code(key) = event.physical_key else {
+                         return Ok(());
+                     };
+-                    #[cfg(target_os = "ios")]
++                    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+                     self.extras_key(key, event.state == ElementState::Pressed, event.repeat);
+                     self.native_key_event(key, event.state == ElementState::Pressed, event.repeat);
+                     // key.smoothCamera toggles the cinematic camera.
+@@ -15795,16 +15795,16 @@
+         );
+         // A phone asks its root view controller, not the bundle's `UISupportedInterfaceOrientations`, so
+         // declaring landscape in `Info.plist` alone still lets it rotate into portrait under the game.
+-        #[cfg(target_os = "ios")]
++        #[cfg(any(target_os = "ios", target_os = "tvos"))]
+         let attributes = winit::platform::ios::WindowAttributesExtIOS::with_valid_orientations(
+             attributes,
+             winit::platform::ios::ValidOrientations::Landscape,
+         );
+         // On iOS winit makes the UIWindow's frame out of the inner size, so a desktop size larger than the
+         // screen in points crops the game off the right and bottom; with none the window is the screen.
+-        #[cfg(not(target_os = "ios"))]
++        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+         let attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]));
+-        #[cfg(target_os = "ios")]
++        #[cfg(any(target_os = "ios", target_os = "tvos"))]
+         let _ = size;
+         let window = match event_loop.create_window(
+             attributes
+@@ -17557,16 +17557,16 @@
+         );
+         // A phone asks its root view controller, not the bundle's `UISupportedInterfaceOrientations`, so
+         // declaring landscape in `Info.plist` alone still lets it rotate into portrait under the game.
+-        #[cfg(target_os = "ios")]
++        #[cfg(any(target_os = "ios", target_os = "tvos"))]
+         let attributes = winit::platform::ios::WindowAttributesExtIOS::with_valid_orientations(
+             attributes,
+             winit::platform::ios::ValidOrientations::Landscape,
+         );
+         // On iOS winit makes the UIWindow's frame out of the inner size, so a desktop size larger than the
+         // screen in points crops the game off the right and bottom; with none the window is the screen.
+-        #[cfg(not(target_os = "ios"))]
++        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+         let attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]));
+-        #[cfg(target_os = "ios")]
++        #[cfg(any(target_os = "ios", target_os = "tvos"))]
+         let _ = size;
+         let window = match event_loop.create_window(
+             attributes
+@@ -18219,7 +18219,7 @@
+     let started = Instant::now();
+     horizon_client::spans::enable(options.spikes.is_some());
+     let vanilla_root = options.resources.clone();
+-    if !cfg!(any(target_os = "ios", target_os = "android"))
++    if !cfg!(any(any(target_os = "ios", target_os = "tvos"), target_os = "android"))
+         && let Some(error) = missing_resources(&vanilla_root)
+     {
+         // The game build started by hand (the release's zip), not by the
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client/src/import.rs /home/claude/w/horizon-ios-main/crates/horizon-client/src/import.rs
+--- a/crates/horizon-client/src/import.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client/src/import.rs	2026-11-01 11:45:09.276893257 +0000
+@@ -106,7 +106,7 @@
+ /// player nothing. Anywhere else it has to be asked for (`HORIZON_IMPORT_SCREEN`), which is how the
+ /// screen is driven and tested on a machine with no phone in it.
+ pub fn waits_on_screen() -> bool {
+-    cfg!(any(target_os = "ios", target_os = "android"))
++    cfg!(any(any(target_os = "ios", target_os = "tvos"), target_os = "android"))
+         || std::env::var_os("HORIZON_IMPORT_SCREEN").is_some()
+ }
+ 
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client/src/main.rs /home/claude/w/horizon-ios-main/crates/horizon-client/src/main.rs
+--- a/crates/horizon-client/src/main.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client/src/main.rs	2026-11-01 11:45:09.268647294 +0000
+@@ -28,7 +28,7 @@
+ /// executable first and then the `resources/` that `horizon_client::import` unpacks into this very
+ /// folder -- so both the assets shipped in the bundle and the ones carried in by a player are found
+ /// with no argument to pass.
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ fn into_app_sandbox() -> Result<std::path::PathBuf, String> {
+     let documents = std::env::var_os("HOME")
+         .filter(|home| !home.is_empty())
+@@ -46,7 +46,7 @@
+     horizon_airplay::register();
+     horizon_airplay::audio::start();
+     std::hint::black_box(&MOD_API_LEVEL);
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     let documents = match into_app_sandbox() {
+         Ok(documents) => documents,
+         Err(error) => {
+@@ -85,13 +85,13 @@
+         log::info!("Horizon {}", crash::version());
+         crash::install(home.clone(), side);
+         // The Microsoft account a last start kept (the title screen's face button), signed in again.
+-        #[cfg(not(target_os = "ios"))]
++        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+         if side == "client" {
+             horizon_client::msa::restore(&home);
+         }
+     }
+     // What a phone does with its files before the game looks for them, once the log can say so.
+-    #[cfg(any(target_os = "ios", target_os = "android"))]
++    #[cfg(any(any(target_os = "ios", target_os = "tvos"), target_os = "android"))]
+     if !help {
+         // A swap that a flat battery or a crash left half done is finished, or the old tree put back,
+         // before anything reads the folder it was working on.
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client/src/title.rs /home/claude/w/horizon-ios-main/crates/horizon-client/src/title.rs
+--- a/crates/horizon-client/src/title.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client/src/title.rs	2026-11-01 11:45:09.265477347 +0000
+@@ -1456,7 +1456,7 @@
+                     ),
+                     ("horizon.account", "Microsoft Account", 8, ACCOUNT_ICON),
+                 ];
+-                let icons = &icons[..if cfg!(target_os = "ios") { 3 } else { 4 }];
++                let icons = &icons[..if cfg!(any(target_os = "ios", target_os = "tvos")) { 3 } else { 4 }];
+                 let start = cx - (icons.len() as f32 * 24.0 - 4.0) / 2.0;
+                 for (i, &(key, plain, id, icon)) in icons.iter().enumerate() {
+                     let mut button = b(
+@@ -2827,11 +2827,11 @@
+             (Mode::Main, Some(8)) => {
+                 // iOS owns its account in the native launcher and Keychain. Opening a
+                 // second device-code account here could leave the two identities out of sync.
+-                #[cfg(target_os = "ios")]
++                #[cfg(any(target_os = "ios", target_os = "tvos"))]
+                 {
+                     Action::Quit
+                 }
+-                #[cfg(not(target_os = "ios"))]
++                #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+                 {
+                     self.mode = Mode::Account;
+                     Action::None
+@@ -3618,8 +3618,8 @@
+             let buttons = title.buttons(w, h);
+             let cx = (w / 2.0).floor();
+             let y = (h / 4.0).floor() + 48.0;
+-            let start = cx - if cfg!(target_os = "ios") { 34.0 } else { 46.0 };
+-            assert_eq!(buttons.iter().any(|b| b.id == 8), !cfg!(target_os = "ios"));
++            let start = cx - if cfg!(any(target_os = "ios", target_os = "tvos")) { 34.0 } else { 46.0 };
++            assert_eq!(buttons.iter().any(|b| b.id == 8), !cfg!(any(target_os = "ios", target_os = "tvos")));
+             for (id, x, enabled, icon) in [
+                 (5, start, true, "friends/friends"),
+                 (6, start + 24.0, true, "icon/language"),
+@@ -3627,7 +3627,7 @@
+                 (8, start + 72.0, true, ACCOUNT_ICON),
+             ]
+             .into_iter()
+-            .filter(|(id, _, _, _)| *id != 8 || !cfg!(target_os = "ios"))
++            .filter(|(id, _, _, _)| *id != 8 || !cfg!(any(target_os = "ios", target_os = "tvos")))
+             {
+                 let b = buttons.iter().find(|b| b.id == id).unwrap();
+                 assert_eq!(
+@@ -3638,7 +3638,7 @@
+                     title.click(x + 10.0, y + 82.0, (w, h)),
+                     match id {
+                         6 => (Action::Language, true),
+-                        8 if cfg!(target_os = "ios") => (Action::Quit, true),
++                        8 if cfg!(any(target_os = "ios", target_os = "tvos")) => (Action::Quit, true),
+                         8 => (Action::None, true),
+                         7 => (Action::Accessibility, true),
+                         _ => (Action::None, true),
+@@ -3651,7 +3651,7 @@
+                     ));
+                     title.mode = Mode::Main;
+                 }
+-                if id == 8 && !cfg!(target_os = "ios") {
++                if id == 8 && !cfg!(any(target_os = "ios", target_os = "tvos")) {
+                     assert!(matches!(title.mode, Mode::Account));
+                     title.mode = Mode::Main;
+                 }
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client-input/Cargo.toml /home/claude/w/horizon-ios-main/crates/horizon-client-input/Cargo.toml
+--- a/crates/horizon-client-input/Cargo.toml	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client-input/Cargo.toml	2026-11-01 11:45:09.245987461 +0000
+@@ -20,7 +20,7 @@
+ [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+ arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
+ 
+-[target.'cfg(target_os = "ios")'.dependencies]
++[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies]
+ horizon-gamecontroller = { path = "../horizon-gamecontroller" }
+ 
+ [features]
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client-input/src/clipboard.rs /home/claude/w/horizon-ios-main/crates/horizon-client-input/src/clipboard.rs
+--- a/crates/horizon-client-input/src/clipboard.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client-input/src/clipboard.rs	2026-11-01 11:45:09.295200679 +0000
+@@ -200,7 +200,7 @@
+ 
+     impl Clipboard for SystemClipboard {
+         fn get(&mut self) -> String {
+-            #[cfg(target_os = "ios")]
++            #[cfg(any(target_os = "ios", target_os = "tvos"))]
+             if let Some(text) = horizon_gamecontroller::clipboard_text() {
+                 return text;
+             }
+@@ -208,7 +208,7 @@
+         }
+         fn set(&mut self, text: &str) {
+             if !text.is_empty() {
+-                #[cfg(target_os = "ios")]
++                #[cfg(any(target_os = "ios", target_os = "tvos"))]
+                 horizon_gamecontroller::set_clipboard_text(text);
+                 self.copied = Some(text.to_owned());
+             }
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client-input/src/keybinds.rs /home/claude/w/horizon-ios-main/crates/horizon-client-input/src/keybinds.rs
+--- a/crates/horizon-client-input/src/keybinds.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client-input/src/keybinds.rs	2026-11-01 11:45:09.294649502 +0000
+@@ -287,7 +287,7 @@
+ /// A key event: what the layout writes on its key, without modifiers, names
+ /// that key from now on (`key_display::learn_layout`), so an AZERTY player's
+ /// Q key shows A.
+-#[cfg(not(any(target_os = "ios", target_os = "android")))]
++#[cfg(not(any(any(target_os = "ios", target_os = "tvos"), target_os = "android")))]
+ pub fn learn_layout(event: &winit::event::KeyEvent) {
+     use winit::keyboard::{Key, PhysicalKey};
+     use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+@@ -307,7 +307,7 @@
+ 
+ // winit has no modifier-supplement backend on iOS or Android. Learning a
+ // shifted/composed logical key here would give the physical binding a wrong name.
+-#[cfg(any(target_os = "ios", target_os = "android"))]
++#[cfg(any(any(target_os = "ios", target_os = "tvos"), target_os = "android"))]
+ pub fn learn_layout(_event: &winit::event::KeyEvent) {}
+ 
+ /// Current bindings by mapping name.
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client-render/src/extras.rs /home/claude/w/horizon-ios-main/crates/horizon-client-render/src/extras.rs
+--- a/crates/horizon-client-render/src/extras.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client-render/src/extras.rs	2026-11-01 11:45:09.300206913 +0000
+@@ -377,7 +377,7 @@
+     }
+ }
+ 
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ mod desktop_ui {
+     use super::*;
+     /// The settings the Extras page shows, one per row.
+@@ -543,15 +543,15 @@
+         }
+     }
+ }
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ pub use desktop_ui::{Item, rows};
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ mod mobile_ui;
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ pub use mobile_ui::{Item, rows};
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ mod native_ios;
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ pub use native_ios::{
+     ZOOM_KEY, ZOOM_LEVELS, ZOOM_MAX, ZOOM_MIN, Zoom, turn_scale, zoom_key_conflicts,
+ };
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client-render/src/gfx.rs /home/claude/w/horizon-ios-main/crates/horizon-client-render/src/gfx.rs
+--- a/crates/horizon-client-render/src/gfx.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client-render/src/gfx.rs	2026-11-01 11:45:09.298730728 +0000
+@@ -1293,9 +1293,9 @@
+ const NO_GPU_DRIVER: &str = "No graphics driver with Vulkan, DirectX 12 or OpenGL found: Horizon needs \
+      a GPU driver with one of them. Install the latest driver for your NVIDIA, AMD or Intel GPU and \
+      start the game again";
+-#[cfg(any(target_os = "macos", target_os = "ios"))]
++#[cfg(any(target_os = "macos", any(target_os = "ios", target_os = "tvos")))]
+ const NO_GPU_DRIVER: &str = "No Metal graphics device found";
+-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios")))]
++#[cfg(not(any(target_os = "windows", target_os = "macos", any(target_os = "ios", target_os = "tvos"))))]
+ const NO_GPU_DRIVER: &str = "No Vulkan or OpenGL graphics driver found: Horizon needs the Vulkan loader \
+      (libvulkan.so.1) and a Vulkan driver for your GPU (Mesa's, or NVIDIA's), or OpenGL through EGL";
+ /// Logs a step of the renderer's start, for a native crash in the graphics
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-client-render/src/logging.rs /home/claude/w/horizon-ios-main/crates/horizon-client-render/src/logging.rs
+--- a/crates/horizon-client-render/src/logging.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-client-render/src/logging.rs	2026-11-01 11:45:09.296439104 +0000
+@@ -39,7 +39,7 @@
+         if let Some(d) = env("APPDATA") {
+             return d;
+         }
+-    } else if cfg!(any(target_os = "macos", target_os = "ios")) {
++    } else if cfg!(any(target_os = "macos", any(target_os = "ios", target_os = "tvos"))) {
+         // iOS joins macOS here rather than falling through to the Unix branch below: an iPhone's `HOME` is
+         // its app's data container, whose root will not take a new `.local` directory, while
+         // `Library/Application Support` inside it is the standard writable place and is what a developer
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-dnssd/Cargo.toml /home/claude/w/horizon-ios-main/crates/horizon-dnssd/Cargo.toml
+--- a/crates/horizon-dnssd/Cargo.toml	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-dnssd/Cargo.toml	2026-11-01 11:45:09.244823520 +0000
+@@ -7,7 +7,7 @@
+ description = "One SRV question to the system resolver on iPhone and iPad, through dns_sd"
+ 
+ # Empty everywhere but iOS: elsewhere horizon-protocol asks the name servers in resolv.conf itself.
+-[target.'cfg(target_os = "ios")'.dependencies]
++[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies]
+ libc = "0.2"
+ 
+ [lints]
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-dnssd/src/lib.rs /home/claude/w/horizon-ios-main/crates/horizon-dnssd/src/lib.rs
+--- a/crates/horizon-dnssd/src/lib.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-dnssd/src/lib.rs	2026-11-01 11:45:09.247064919 +0000
+@@ -5,10 +5,10 @@
+ //! phone's name servers. The protocol forbids `unsafe`, so the C calls live here and it sees plain bytes.
+ //! Elsewhere there is nothing in the crate.
+ 
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ pub use ios::{TIMEOUT, query_srv};
+ 
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ mod ios {
+     use std::{
+         ffi::{CString, c_char, c_int, c_void},
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-dualsense/Cargo.toml /home/claude/w/horizon-ios-main/crates/horizon-dualsense/Cargo.toml
+--- a/crates/horizon-dualsense/Cargo.toml	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-dualsense/Cargo.toml	2026-11-01 11:45:09.244546903 +0000
+@@ -12,7 +12,7 @@
+ # hidapi has no iOS backend and its build script stops there, so the output's two
+ # dependencies go only to the targets that have one. On iOS the crate builds without
+ # output: the Link never opens.
+-[target.'cfg(not(target_os = "ios"))'.dependencies]
++[target.'cfg(not(any(target_os = "ios", target_os = "tvos")))'.dependencies]
+ # MIT; bundles the C hidapi under its BSD licence option. hidraw on Linux (libudev, as gilrs),
+ # IOKit on macOS (opened shared, so gilrs keeps reading the pad), the HID API on Windows.
+ hidapi = { version = "2.6.7", default-features = false, features = ["linux-static-hidraw", "macos-shared-device"] }
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-dualsense/src/device.rs /home/claude/w/horizon-ios-main/crates/horizon-dualsense/src/device.rs
+--- a/crates/horizon-dualsense/src/device.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-dualsense/src/device.rs	2026-11-01 11:45:09.246826538 +0000
+@@ -1,20 +1,20 @@
+ //! The pad over hidapi, and the thread that writes to it: writes block (a Bluetooth report can
+ //! take milliseconds), so the game only hands over what the pad should do.
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ use crate::{DEFAULT_LIGHTBAR, Output, PLAYER_1, Vibration, is_dualsense};
+ use crate::{TRIGGER_OFF, TriggerEffect};
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ use hidapi::{BusType, HidApi, HidDevice, HidResult};
+ use std::sync::Arc;
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ use std::sync::atomic::AtomicBool;
+ use std::sync::atomic::{AtomicU8, Ordering};
+ use std::sync::mpsc::Sender;
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ use std::sync::mpsc::{self, RecvTimeoutError};
+ use std::thread::JoinHandle;
+ use std::time::Duration;
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ use std::time::Instant;
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -24,7 +24,7 @@
+ }
+ 
+ /// An open DualSense.
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ pub struct DualSense {
+     device: HidDevice,
+     transport: Transport,
+@@ -42,7 +42,7 @@
+     cfg!(target_os = "linux") || std::env::var_os("HORIZON_DUALSENSE_BT").is_some_and(|v| v == "1")
+ }
+ 
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ impl DualSense {
+     /// The first DualSense hidapi lists, USB before Bluetooth (as SDL); `None` when there is
+     /// none, an error when it can't be opened (Linux without access to its hidraw node).
+@@ -130,7 +130,7 @@
+ 
+ // On iOS no thread reads the queue (the Link never opens); the variants stay so the
+ // Link's API is the same everywhere.
+-#[cfg_attr(target_os = "ios", allow(dead_code))]
++#[cfg_attr(any(target_os = "ios", target_os = "tvos"), allow(dead_code))]
+ enum Message {
+     State(State),
+     Rumble(Rumble),
+@@ -148,7 +148,7 @@
+ 
+ impl Link {
+     /// Start the thread and look for a DualSense.
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     pub fn start() -> Link {
+         let (tx, rx) = mpsc::channel();
+         let open = Arc::new(AtomicU8::new(0));
+@@ -166,7 +166,7 @@
+     }
+ 
+     /// No output on iOS: hidapi has no backend there. The Link never opens.
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     pub fn start() -> Link {
+         Link {
+             tx: None,
+@@ -218,10 +218,10 @@
+ 
+ /// Looks for the pad this many more times, a second apart, after a scan finds nothing (its
+ /// hidraw node may appear after the controller does).
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ const SCAN_TRIES: u32 = 5;
+ 
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ struct Writer {
+     api: Option<HidApi>,
+     pad: Option<DualSense>,
+@@ -239,7 +239,7 @@
+     next_scan: Instant,
+ }
+ 
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ #[derive(Clone, Copy, Debug, PartialEq)]
+ enum Lights {
+     /// Over Bluetooth, until the pad's clock says its animation is over (or this long after
+@@ -252,13 +252,13 @@
+ 
+ /// The pad's sensor clock once its Bluetooth connection animation is over (SDL_hidapi_ps5.c's
+ /// `HIDAPI_DriverPS5_CheckPendingLEDReset`).
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ const ANIMATION_OVER: u32 = 10_200_000;
+ 
+ /// The sensor clock of a Bluetooth input report 0x31: its state block starts at byte 2 and
+ /// holds the clock at 27..31, little-endian (SDL's `PS5StatePacketCommon_t`, the kernel's
+ /// `dualsense_input_report`).
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ fn bluetooth_clock(report: &[u8]) -> Option<u32> {
+     match report {
+         [0x31, _, state @ ..] if state.len() >= 31 => {
+@@ -268,7 +268,7 @@
+     }
+ }
+ 
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ impl Writer {
+     fn new(open: Arc<AtomicU8>) -> Self {
+         Writer {
+@@ -481,7 +481,7 @@
+     }
+ }
+ 
+-#[cfg(all(test, not(target_os = "ios")))]
++#[cfg(all(test, not(any(target_os = "ios", target_os = "tvos"))))]
+ mod tests {
+     use super::*;
+ 
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-dualsense/src/lib.rs /home/claude/w/horizon-ios-main/crates/horizon-dualsense/src/lib.rs
+--- a/crates/horizon-dualsense/src/lib.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-dualsense/src/lib.rs	2026-11-01 11:45:09.246553668 +0000
+@@ -8,9 +8,9 @@
+ //! and as report 0x31 over Bluetooth, where a sequence tag leads it and a CRC-32 (seeded with
+ //! the byte 0xA2) closes it.
+ pub mod device;
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ pub mod haptics;
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ #[path = "haptics_stub.rs"]
+ pub mod haptics;
+ pub mod trigger;
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-gamecontroller/Cargo.toml /home/claude/w/horizon-ios-main/crates/horizon-gamecontroller/Cargo.toml
+--- a/crates/horizon-gamecontroller/Cargo.toml	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-gamecontroller/Cargo.toml	2026-11-01 11:45:09.245273501 +0000
+@@ -8,7 +8,7 @@
+ 
+ # Empty everywhere but iOS: the crate is a dependency of every build of the client, and only a phone has
+ # nothing else to read a pad with (gilrs has no iOS backend).
+-[target.'cfg(target_os = "ios")'.dependencies]
++[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies]
+ objc2 = "0.6.3"
+ objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "UIPasteboard"] }
+ objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSString"] }
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-gamecontroller/src/lib.rs /home/claude/w/horizon-ios-main/crates/horizon-gamecontroller/src/lib.rs
+--- a/crates/horizon-gamecontroller/src/lib.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-gamecontroller/src/lib.rs	2026-11-01 11:45:09.260790346 +0000
+@@ -40,7 +40,7 @@
+     pub triggers: [f32; 2],
+ }
+ 
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ mod ios {
+     use super::{Controller, Snapshot};
+     use objc2_game_controller::{
+@@ -102,43 +102,43 @@
+ 
+ /// Every controller iOS has paired.
+ pub fn controllers() -> Vec<Controller> {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     return ios::controllers();
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     Vec::new()
+ }
+ 
+ /// The pad that drives the game, read now: the one iOS last saw used, else the first with a full gamepad
+ /// profile. `None` when no such pad is connected.
+ pub fn active() -> Option<Snapshot> {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     return ios::active();
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     None
+ }
+ 
+ /// Whether an external keyboard is currently attached (main-thread UIKit input use only).
+ pub fn keyboard_connected() -> bool {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     // SAFETY: a read-only GameController class property, on the game's main thread.
+     return unsafe { objc2_game_controller::GCKeyboard::coalescedKeyboard().is_some() };
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     false
+ }
+ 
+ /// Whether a hardware mouse is currently attached (main-thread UIKit input use only).
+ pub fn mouse_connected() -> bool {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     // SAFETY: a read-only GameController class property, on the game's main thread.
+     return unsafe { !objc2_game_controller::GCMouse::mice().is_empty() };
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     false
+ }
+ 
+ /// Read iPadOS/iOS text when a game edit shortcut explicitly requests paste.
+ /// `None` means the caller is not on UIKit's main thread; no pasteboard access is attempted.
+ pub fn clipboard_text() -> Option<String> {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     {
+         let _main = objc2::MainThreadMarker::new()?;
+         let board = objc2_ui_kit::UIPasteboard::generalPasteboard();
+@@ -146,13 +146,13 @@
+         // is converted to owned text before returning to the caller.
+         Some(unsafe { board.string() }.map_or_else(String::new, |s| s.to_string()))
+     }
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     None
+ }
+ 
+ /// Write text copied by the game to the iOS system pasteboard.
+ pub fn set_clipboard_text(text: &str) {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     if let Some(_main) = objc2::MainThreadMarker::new() {
+         let board = objc2_ui_kit::UIPasteboard::generalPasteboard();
+         let text = objc2_foundation::NSString::from_str(text);
+@@ -160,6 +160,6 @@
+         // the call and UIPasteboard copies its value.
+         unsafe { board.setString(Some(&text)) };
+     }
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     let _ = text;
+ }
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-ios-launcher/Cargo.toml /home/claude/w/horizon-ios-main/crates/horizon-ios-launcher/Cargo.toml
+--- a/crates/horizon-ios-launcher/Cargo.toml	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-ios-launcher/Cargo.toml	2026-11-01 11:45:09.245802433 +0000
+@@ -7,7 +7,7 @@
+ description = "Shows the SwiftUI launcher (packaging/ios/Launcher) over the game on iPhone and iPad"
+ 
+ # Empty everywhere but iOS: the launcher is a Swift framework only an iOS bundle carries.
+-[target.'cfg(target_os = "ios")'.dependencies]
++[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies]
+ libc = "0.2"
+ log = "0.4"
+ 
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-ios-launcher/src/lib.rs /home/claude/w/horizon-ios-main/crates/horizon-ios-launcher/src/lib.rs
+--- a/crates/horizon-ios-launcher/src/lib.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-ios-launcher/src/lib.rs	2026-11-01 11:45:09.292753640 +0000
+@@ -53,7 +53,7 @@
+ static QUEUE: Mutex<VecDeque<Request>> = Mutex::new(VecDeque::new());
+ 
+ /// Bundled iOS builds expose accounts and game management before Play.
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ const ENABLED: bool = true;
+ 
+ /// The native launcher fully covers the game's surface. Its bridge still needs polling.
+@@ -125,9 +125,9 @@
+ 
+ /// Whether this bundle carries the launcher, which holds the game until it is started.
+ fn bundled() -> bool {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     return ENABLED && ios::framework().is_some();
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     false
+ }
+ 
+@@ -149,9 +149,9 @@
+ /// Show the launcher over the game again (Quit Game, which an iPhone app does not do itself). False when this
+ /// build or bundle has none; the launcher ignores a second request while it is up.
+ pub fn show() -> bool {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     return ENABLED && ios::present();
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     false
+ }
+ 
+@@ -160,13 +160,13 @@
+ /// launcher is switched on, since it only needs the framework. False when this build or bundle has none, and the
+ /// game's own download screen is all there is.
+ pub fn present_download() -> bool {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+     return ios::call(ios::DOWNLOAD);
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+     false
+ }
+ 
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ mod ios {
+     use std::ffi::{CStr, CString, c_char, c_void};
+ 
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-protocol/Cargo.toml /home/claude/w/horizon-ios-main/crates/horizon-protocol/Cargo.toml
+--- a/crates/horizon-protocol/Cargo.toml	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-protocol/Cargo.toml	2026-11-01 11:45:09.245497543 +0000
+@@ -22,7 +22,7 @@
+ ipconfig = "0.3.4"
+ 
+ # iOS gives an app no resolv.conf: the SRV question goes to the system resolver.
+-[target.'cfg(target_os = "ios")'.dependencies]
++[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies]
+ horizon-dnssd = { path = "../horizon-dnssd" }
+ 
+ # Its own name, not `probe`: Cargo copies every crate's examples into one target/<profile>/examples.
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-protocol/src/resolver/dns.rs /home/claude/w/horizon-ios-main/crates/horizon-protocol/src/resolver/dns.rs
+--- a/crates/horizon-protocol/src/resolver/dns.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-protocol/src/resolver/dns.rs	2026-11-01 11:45:09.262893161 +0000
+@@ -5,7 +5,7 @@
+ //!
+ //! iOS gives an app no resolv.conf to read, so the phone asks the system's own
+ //! resolver instead (`query_srv_system`) and the rest goes unused there.
+-#![cfg_attr(target_os = "ios", allow(dead_code))]
++#![cfg_attr(any(target_os = "ios", target_os = "tvos"), allow(dead_code))]
+ use std::{
+     io::{Read, Write},
+     net::{SocketAddr, TcpStream, UdpSocket},
+@@ -125,7 +125,7 @@
+ 
+ /// The phone's question, through the system resolver ([`horizon_dnssd`]): its
+ /// rdata is a record's own, with no compression to follow.
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ pub(super) fn query_srv_system(name: &str) -> Option<(String, u16)> {
+     let rdata = horizon_dnssd::query_srv(name, horizon_dnssd::TIMEOUT)?;
+     let port = u16::from_be_bytes([*rdata.get(4)?, *rdata.get(5)?]);
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/crates/horizon-protocol/src/resolver.rs /home/claude/w/horizon-ios-main/crates/horizon-protocol/src/resolver.rs
+--- a/crates/horizon-protocol/src/resolver.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/crates/horizon-protocol/src/resolver.rs	2026-11-01 11:45:09.262135316 +0000
+@@ -37,14 +37,14 @@
+     addresses(host, port)
+ }
+ 
+-#[cfg(not(target_os = "ios"))]
++#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+ fn srv_redirect(name: &str) -> Option<(String, u16)> {
+     dns::query_srv(name, &dns::system_name_servers(), dns::SERVER_TIMEOUT)
+ }
+ 
+ /// The phone has no resolv.conf to read: without this, `hypixel.net` went to
+ /// the website's addresses instead of its `_minecraft._tcp` target.
+-#[cfg(target_os = "ios")]
++#[cfg(any(target_os = "ios", target_os = "tvos"))]
+ fn srv_redirect(name: &str) -> Option<(String, u16)> {
+     dns::query_srv_system(name)
+ }
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/packaging/ios/TVInfo.plist /home/claude/w/horizon-ios-main/packaging/ios/TVInfo.plist
+--- a/packaging/ios/TVInfo.plist	1970-01-01 00:00:00.000000000 +0000
++++ b/packaging/ios/TVInfo.plist	2026-11-01 11:45:32.529734269 +0000
+@@ -0,0 +1,59 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<!--
++  The Apple TV game bundle's Info.plist: GameInfo.plist's counterpart for the HorizonTV target. Same executable name
++  and bundle identifier as the iPhone and iPad app (different platform, so they never collide, and it keeps
++  Universal Purchase possible), but none of the keys tvOS has no meaning for: no file sharing (an Apple TV has no
++  Files app), no orientations, no launch screen, no scene manifest (winit supplies its own UIApplicationDelegate,
++  as on iOS: naming one here would replace the delegate the game's window comes from).
++  No icon yet: tvOS wants layered brand assets (App Icon, App Icon Small, Top Shelf), which are a separate piece.
++-->
++<plist version="1.0">
++<dict>
++	<key>CFBundleDevelopmentRegion</key>
++	<string>en</string>
++	<key>CFBundleDisplayName</key>
++	<string>Horizon</string>
++	<key>CFBundleExecutable</key>
++	<string>Horizon</string>
++	<key>CFBundleIdentifier</key>
++	<string>dev.horizon.game</string>
++	<key>CFBundleInfoDictionaryVersion</key>
++	<string>6.0</string>
++	<key>CFBundleName</key>
++	<string>Horizon</string>
++	<key>CFBundlePackageType</key>
++	<string>APPL</string>
++	<key>CFBundleShortVersionString</key>
++	<string>0.1.0</string>
++	<key>CFBundleVersion</key>
++	<string>1</string>
++	<!-- Your own Azure app, never another launcher's. Empty here; .github/workflows/tvos.yml fills it from the
++	     repository variable HORIZON_MSA_CLIENT_ID. -->
++	<key>HorizonMSAClientID</key>
++	<string></string>
++	<key>ITSAppUsesNonExemptEncryption</key>
++	<false/>
++	<key>MinimumOSVersion</key>
++	<string>17.0</string>
++	<key>NSHumanReadableCopyright</key>
++	<string>Horizon is MIT licensed. Not an official Minecraft product; not approved by or associated with Mojang or Microsoft.</string>
++	<!-- Game files come from a link on the local network (http to local addresses only), as on iPhone. -->
++	<key>NSAppTransportSecurity</key>
++	<dict>
++		<key>NSAllowsLocalNetworking</key>
++		<true/>
++	</dict>
++	<key>NSLocalNetworkUsageDescription</key>
++	<string>Horizon looks for a computer on your network to receive your game files from, and for friends' worlds.</string>
++	<key>UIDeviceFamily</key>
++	<array>
++		<integer>3</integer>
++	</array>
++	<key>UIRequiredDeviceCapabilities</key>
++	<array>
++		<string>arm64</string>
++		<string>metal</string>
++	</array>
++</dict>
++</plist>
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/packaging/ios/project.yml /home/claude/w/horizon-ios-main/packaging/ios/project.yml
+--- a/packaging/ios/project.yml	2026-10-31 07:54:09.000000000 +0000
++++ b/packaging/ios/project.yml	2026-11-01 11:45:32.545248142 +0000
+@@ -21,6 +21,7 @@
+   xcodeVersion: "15.4"
+   deploymentTarget:
+     iOS: "16.0"
++    tvOS: "17.0"
+ settings:
+   base:
+     MARKETING_VERSION: 0.1.0
+@@ -38,6 +39,9 @@
+     # same target the phone build is measured with. Build settings are exported to script phases, so both halves
+     # read one value.
+     IOS_TARGET: aarch64-apple-ios
++    # The Apple TV build's target (HorizonTV below). A Rust tier 3 target: no prebuilt standard library, so
++    # .github/workflows/tvos.yml builds it with nightly and -Zbuild-std.
++    TVOS_TARGET: aarch64-apple-tvos
+ targets:
+   Horizon:
+     type: application
+@@ -165,6 +169,64 @@
+         SKIP_INSTALL: YES
+         TARGETED_DEVICE_FAMILY: "1,2"
+ 
++  # The game for Apple TV, independent of the iPhone and iPad one above: its own target, executable and
++  # workflow (.github/workflows/tvos.yml), so a tvOS failure never touches the iOS build. Same recipe as
++  # HorizonGame (Cargo builds the executable, Xcode makes the bundle), with three differences: the Rust target is
++  # tier 3, so nightly with -Zbuild-std; there is no SwiftUI launcher yet (the game logs "no launcher framework"
++  # and goes on; the Wi-Fi import screen and Horizon's own sign-in screen are what an Apple TV has); and no icon.
++  HorizonTV:
++    type: application
++    platform: tvOS
++    productName: HorizonTV
++    sources:
++      - path: GameShell
++    preBuildScripts:
++      - name: Build the game with Cargo
++        shell: /bin/bash
++        showEnvVarsInLog: false
++        script: |
++          set -euo pipefail
++          export PATH="$HOME/.cargo/bin:$PATH"
++          command -v cargo >/dev/null 2>&1 || {
++            echo "error: no cargo on PATH. Install Rust with https://rustup.rs, or run Xcode from a terminal." >&2
++            exit 1
++          }
++          cd "$SRCROOT/../.."
++          # CI builds the game in its own step first and sets this, so the bundle step does not compile it twice.
++          if [ -n "${HORIZON_GAME_PREBUILT:-}" ] && [ -x "target/$TVOS_TARGET/release/horizon-client" ]; then
++            echo "Horizon: using the game Cargo already built (HORIZON_GAME_PREBUILT)."
++            exit 0
++          fi
++          # `audio` stays off until cpal is known to have a tvOS backend; `controllers` is off for the reason it
++          # is off on iOS (GameController reads pads).
++          cargo +nightly build -Zbuild-std=std,panic_abort --release --target "$TVOS_TARGET" -p horizon-client --no-default-features
++    postCompileScripts:
++      - name: Put the Rust game in the bundle
++        shell: /bin/bash
++        showEnvVarsInLog: false
++        script: |
++          set -euo pipefail
++          game="$SRCROOT/../../target/$TVOS_TARGET/release/horizon-client"
++          test -x "$game" || {
++            echo "error: the Cargo phase reported success and left no $game" >&2
++            exit 1
++          }
++          dest="$BUILT_PRODUCTS_DIR/$EXECUTABLE_PATH"
++          cp "$game" "$dest"
++          chmod +x "$dest"
++          echo "Horizon: $dest is now the Rust game, $(stat -f %z "$dest") bytes."
++    settings:
++      base:
++        INFOPLIST_FILE: TVInfo.plist
++        GENERATE_INFOPLIST_FILE: NO
++        PRODUCT_BUNDLE_IDENTIFIER: dev.horizon.game
++        PRODUCT_NAME: HorizonTV
++        TARGETED_DEVICE_FAMILY: "3"
++        TVOS_DEPLOYMENT_TARGET: "17.0"
++        EXECUTABLE_NAME: Horizon
++        # No icon catalog in this target.
++        ASSETCATALOG_COMPILER_APPICON_NAME: ""
++
+ # Two schemes, so the run destination picker says which app is about to launch: the probe shell and the game.
+ schemes:
+   Horizon shell:
+@@ -179,3 +241,9 @@
+         HorizonGame: All
+     run:
+       config: Release
++  Horizon TV:
++    build:
++      targets:
++        HorizonTV: All
++    run:
++      config: Release
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/third_party/wgpu-hal/Cargo.toml /home/claude/w/horizon-ios-main/third_party/wgpu-hal/Cargo.toml
+--- a/third_party/wgpu-hal/Cargo.toml	2026-10-31 07:54:09.000000000 +0000
++++ b/third_party/wgpu-hal/Cargo.toml	2026-11-01 11:45:09.308716821 +0000
+@@ -292,7 +292,7 @@
+ version = "1.10"
+ optional = true
+ 
+-[target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos", target_env = "ohos")))'.dev-dependencies.glutin]
++[target.'cfg(not(any(target_arch = "wasm32", any(target_os = "ios", target_os = "tvos"), target_os = "visionos", target_env = "ohos")))'.dev-dependencies.glutin]
+ version = "0.32"
+ features = [
+     "egl",
+@@ -302,7 +302,7 @@
+ ]
+ default-features = false
+ 
+-[target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos", target_env = "ohos")))'.dev-dependencies.glutin-winit]
++[target.'cfg(not(any(target_arch = "wasm32", any(target_os = "ios", target_os = "tvos"), target_os = "visionos", target_env = "ohos")))'.dev-dependencies.glutin-winit]
+ version = "0.5"
+ features = [
+     "egl",
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/third_party/wgpu-hal/src/metal/adapter.rs /home/claude/w/horizon-ios-main/third_party/wgpu-hal/src/metal/adapter.rs
+--- a/third_party/wgpu-hal/src/metal/adapter.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/third_party/wgpu-hal/src/metal/adapter.rs	2026-11-01 11:45:09.314905223 +0000
+@@ -621,7 +621,7 @@
+     /// Query the capabilities of the device.
+     pub fn new(device: &ProtocolObject<dyn MTLDevice>) -> Self {
+         // There are four different OSes we can target: macOS, iOS, tvOS and
+-        // visionOS. This can be detected using `cfg!(target_os = "ios")`, or
++        // visionOS. This can be detected using `cfg!(any(target_os = "ios", target_os = "tvos"))`, or
+         // more conveniently using the `available!(...)` macro, which also
+         // checks that the OS version that the binary is currently running on
+         // is higher than or equal to the specified version.
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/third_party/winit/Cargo.toml /home/claude/w/horizon-ios-main/third_party/winit/Cargo.toml
+--- a/third_party/winit/Cargo.toml	2026-10-31 07:54:09.000000000 +0000
++++ b/third_party/winit/Cargo.toml	2026-11-01 11:45:09.308239880 +0000
+@@ -226,31 +226,31 @@
+ version = "2"
+ default-features = false
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.ahash]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.ahash]
+ version = "0.8.7"
+ features = ["no-rng"]
+ optional = true
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.bytemuck]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.bytemuck]
+ version = "1.13.1"
+ optional = true
+ default-features = false
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.calloop]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.calloop]
+ version = "0.13.0"
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.libc]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.libc]
+ version = "0.2.64"
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.memmap2]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.memmap2]
+ version = "0.9.0"
+ optional = true
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.percent-encoding]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.percent-encoding]
+ version = "2.0"
+ optional = true
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.rustix]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.rustix]
+ version = "0.38.4"
+ features = [
+     "std",
+@@ -260,43 +260,43 @@
+ ]
+ default-features = false
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.sctk]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.sctk]
+ version = "0.19.2"
+ features = ["calloop"]
+ optional = true
+ default-features = false
+ package = "smithay-client-toolkit"
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.sctk-adwaita]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.sctk-adwaita]
+ version = "0.10.1"
+ optional = true
+ default-features = false
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.wayland-backend]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.wayland-backend]
+ version = "0.3.10"
+ features = ["client_system"]
+ optional = true
+ default-features = false
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.wayland-client]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.wayland-client]
+ version = "0.31.10"
+ optional = true
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.wayland-protocols]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.wayland-protocols]
+ version = "0.32.8"
+ features = ["staging"]
+ optional = true
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.wayland-protocols-plasma]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.wayland-protocols-plasma]
+ version = "0.3.8"
+ features = ["client"]
+ optional = true
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.x11-dl]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.x11-dl]
+ version = "2.19.1"
+ optional = true
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.x11rb]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.x11rb]
+ version = "0.13.0"
+ features = [
+     "allow-unsafe-code",
+@@ -309,20 +309,20 @@
+ optional = true
+ default-features = false
+ 
+-[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", target_os = "ios", target_os = "macos"))))'.dependencies.xkbcommon-dl]
++[target.'cfg(all(unix, not(any(target_os = "redox", target_family = "wasm", target_os = "android", any(target_os = "ios", target_os = "tvos"), target_os = "macos"))))'.dependencies.xkbcommon-dl]
+ version = "0.4.2"
+ 
+-[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies.block2]
++[target.'cfg(any(any(target_os = "ios", target_os = "tvos"), target_os = "macos"))'.dependencies.block2]
+ version = "0.5.1"
+ 
+-[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies.core-foundation]
++[target.'cfg(any(any(target_os = "ios", target_os = "tvos"), target_os = "macos"))'.dependencies.core-foundation]
+ version = "0.9.3"
+ 
+-[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies.objc2]
++[target.'cfg(any(any(target_os = "ios", target_os = "tvos"), target_os = "macos"))'.dependencies.objc2]
+ version = "0.5.2"
+ features = ["relax-sign-encoding"]
+ 
+-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dev-dependencies.softbuffer]
++[target.'cfg(not(any(target_os = "android", any(target_os = "ios", target_os = "tvos"))))'.dev-dependencies.softbuffer]
+ version = "0.4.0"
+ features = [
+     "x11",
+@@ -415,7 +415,7 @@
+ version = "0.9.0"
+ default-features = false
+ 
+-[target.'cfg(target_os = "ios")'.dependencies.objc2-foundation]
++[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies.objc2-foundation]
+ version = "0.2.2"
+ features = [
+     "block2",
+@@ -432,7 +432,7 @@
+     "NSSet",
+ ]
+ 
+-[target.'cfg(target_os = "ios")'.dependencies.objc2-ui-kit]
++[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies.objc2-ui-kit]
+ version = "0.2.2"
+ features = [
+     "UIApplication",
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/third_party/winit/build.rs /home/claude/w/horizon-ios-main/third_party/winit/build.rs
+--- a/third_party/winit/build.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/third_party/winit/build.rs	2026-11-01 11:45:09.308463219 +0000
+@@ -10,9 +10,9 @@
+         android_platform: { target_os = "android" },
+         web_platform: { all(target_family = "wasm", target_os = "unknown") },
+         macos_platform: { target_os = "macos" },
+-        ios_platform: { target_os = "ios" },
++        ios_platform: { any(target_os = "ios", target_os = "tvos") },
+         windows_platform: { target_os = "windows" },
+-        apple: { any(target_os = "ios", target_os = "macos") },
++        apple: { any(any(target_os = "ios", target_os = "tvos"), target_os = "macos") },
+         free_unix: { all(unix, not(apple), not(android_platform), not(target_os = "emscripten")) },
+         redox: { target_os = "redox" },
+ 
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/third_party/winit/examples/util/fill.rs /home/claude/w/horizon-ios-main/third_party/winit/examples/util/fill.rs
+--- a/third_party/winit/examples/util/fill.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/third_party/winit/examples/util/fill.rs	2026-11-01 11:45:09.312969693 +0000
+@@ -11,7 +11,7 @@
+ pub use platform::cleanup_window;
+ pub use platform::fill_window;
+ 
+-#[cfg(all(feature = "rwh_05", not(any(target_os = "android", target_os = "ios"))))]
++#[cfg(all(feature = "rwh_05", not(any(target_os = "android", any(target_os = "ios", target_os = "tvos")))))]
+ mod platform {
+     use std::cell::RefCell;
+     use std::collections::HashMap;
+@@ -104,7 +104,7 @@
+     }
+ }
+ 
+-#[cfg(not(all(feature = "rwh_05", not(any(target_os = "android", target_os = "ios")))))]
++#[cfg(not(all(feature = "rwh_05", not(any(target_os = "android", any(target_os = "ios", target_os = "tvos"))))))]
+ mod platform {
+     pub fn fill_window(_window: &winit::window::Window) {
+         // No-op on mobile platforms.
+diff -ruN -x benchmarks -x .git -x target horizon-ios-main/third_party/winit/src/lib.rs /home/claude/w/horizon-ios-main/third_party/winit/src/lib.rs
+--- a/third_party/winit/src/lib.rs	2026-10-31 07:54:09.000000000 +0000
++++ b/third_party/winit/src/lib.rs	2026-11-01 11:45:09.309292046 +0000
+@@ -217,6 +217,6 @@
+ pub mod platform;
+ 
+ // Horizon: exercise UIKit's layout-independent key mapping on the build host too.
+-#[cfg(all(test, not(target_os = "ios")))]
++#[cfg(all(test, not(any(target_os = "ios", target_os = "tvos"))))]
+ #[path = "platform_impl/ios/hardware_keyboard.rs"]
+ mod ios_hardware_keyboard_tests;

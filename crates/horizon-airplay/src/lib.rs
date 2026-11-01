@@ -26,36 +26,36 @@ pub struct Screen {
     pub id: u64,
     /// The view's size in pixels.
     pub size: (u32, u32),
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     view: std::ptr::NonNull<std::ffi::c_void>,
 }
 
 // SAFETY: the view is only handed to wgpu, which reads it on the main thread when it makes the surface, and
 // `ios::STATE` keeps it alive while the display is connected.
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 unsafe impl Send for Screen {}
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 unsafe impl Sync for Screen {}
 
 impl HasWindowHandle for Screen {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
         let handle = raw_window_handle::UiKitWindowHandle::new(self.view);
         // SAFETY: the view is alive for as long as this display is connected (see `Screen`).
         Ok(unsafe { WindowHandle::borrow_raw(handle.into()) })
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
         Err(HandleError::Unavailable)
     }
 }
 
 impl HasDisplayHandle for Screen {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
         Ok(DisplayHandle::uikit())
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
         Err(HandleError::Unavailable)
     }
@@ -73,7 +73,7 @@ pub struct Button {
 
 /// Make the scene delegate's class known before iOS asks for it by name: call it before the event loop.
 pub fn register() {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     ios::register();
 }
 
@@ -81,9 +81,9 @@ pub fn register() {
 /// `split`. Called every frame: `cover_phone` says whether the phone shows the cover over everything (while
 /// the game draws on the display) or what is under it (the launcher, which needs its touches).
 pub fn screen(cover_phone: bool, split: bool) -> Option<Screen> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     return ios::screen(cover_phone, split);
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     {
         let _ = (cover_phone, split);
         None
@@ -92,31 +92,31 @@ pub fn screen(cover_phone: bool, split: bool) -> Option<Screen> {
 
 /// The second player's view: the bottom half, while [`screen`] splits the display.
 pub fn second_screen() -> Option<Screen> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     return ios::second_screen();
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     None
 }
 
 /// The phone shows the game under its cover: splitscreen's second player's menus, which they tap there.
 /// Called every frame in splitscreen; off again when it ends.
 pub fn phone_shows_game(on: bool) {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     ios::phone_shows_game(on);
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     let _ = on;
 }
 
 /// The second player's touch controls on the phone, which then lets its touches through to the game; `None`
 /// takes them away and the cover takes the touches again.
 pub fn phone_controls(buttons: Option<&[Button]>) {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     ios::phone_controls(buttons);
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     let _ = buttons;
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 mod ios {
     use super::{Button, Screen};
     use objc2::rc::Retained;

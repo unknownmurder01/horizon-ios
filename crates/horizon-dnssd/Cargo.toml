@@ -7,7 +7,7 @@ rust-version = "1.85"
 description = "One SRV question to the system resolver on iPhone and iPad, through dns_sd"
 
 # Empty everywhere but iOS: elsewhere horizon-protocol asks the name servers in resolv.conf itself.
-[target.'cfg(target_os = "ios")'.dependencies]
+[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies]
 libc = "0.2"
 
 [lints]

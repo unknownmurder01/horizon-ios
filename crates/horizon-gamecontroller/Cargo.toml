@@ -8,7 +8,7 @@ description = "Controllers on iPhone and iPad through Apple's GameController fra
 
 # Empty everywhere but iOS: the crate is a dependency of every build of the client, and only a phone has
 # nothing else to read a pad with (gilrs has no iOS backend).
-[target.'cfg(target_os = "ios")'.dependencies]
+[target.'cfg(any(target_os = "ios", target_os = "tvos"))'.dependencies]
 objc2 = "0.6.3"
 objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "UIPasteboard"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSString"] }

@@ -105,9 +105,9 @@ mod entity_culling;
 mod events;
 mod execution_role;
 mod explosion;
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 mod extras;
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 #[path = "game/extras_ios.rs"]
 mod extras;
 mod falling_damage;
@@ -521,7 +521,7 @@ impl Options {
         // On a phone, the folder an import unpacked into `Documents` is the one a player can reach. On
         // Linux, the game files a start downloaded live in the game's home (`import::home`). A desktop
         // without them gives the answer it has always given.
-        let sandbox = if cfg!(any(target_os = "ios", target_os = "android")) {
+        let sandbox = if cfg!(any(any(target_os = "ios", target_os = "tvos"), target_os = "android")) {
             std::env::current_dir().ok()
         } else if cfg!(target_os = "linux") {
             Some(horizon_client::import::home())
@@ -6848,7 +6848,7 @@ impl Game<'_> {
     /// `Minecraft.pauseIfInactive`: a window without focus for more than 500 ms
     /// pauses the game. An open screen (books, signs, the pack prompt, a server
     /// dialog) stays instead of pausing (`Gui.setPauseScreen`).
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     fn pause_if_inactive(&mut self) {
         if self
             .focus_lost
@@ -6929,7 +6929,7 @@ impl Game<'_> {
         // screen's quick move and clicks.
         self.reset_inventory_clicks();
         if !capture {
-            #[cfg(target_os = "ios")]
+            #[cfg(any(target_os = "ios", target_os = "tvos"))]
             {
                 self.left = false;
                 self.right = false;
@@ -14599,7 +14599,7 @@ impl Game<'_> {
             ));
             return;
         }
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
         {
             // UIKit pointer lock is a gameplay request; every overlay/text field releases it.
             let want = self.focused
@@ -14616,7 +14616,7 @@ impl Game<'_> {
             }
         }
         self.poll_pads(event_loop);
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
         self.pause_if_inactive();
         if !self.splitscreen.active {
             self.sync_system_keyboard();
@@ -14855,7 +14855,7 @@ impl Game<'_> {
             return;
         }
         let result: Result<()> = (|| {
-            #[cfg(target_os = "ios")]
+            #[cfg(any(target_os = "ios", target_os = "tvos"))]
             if let WindowEvent::KeyboardInput { event, .. } = &event
                 && event.state == ElementState::Pressed
                 && let PhysicalKey::Code(key) = event.physical_key
@@ -14865,7 +14865,7 @@ impl Game<'_> {
             }
             // A field or menu may have opened since key-down. Release the translated binding
             // before that screen consumes it, including keys rebound to mouse actions.
-            #[cfg(target_os = "ios")]
+            #[cfg(any(target_os = "ios", target_os = "tvos"))]
             if let WindowEvent::KeyboardInput { event, .. } = &event
                 && event.state == ElementState::Released
                 && let PhysicalKey::Code(key) = event.physical_key
@@ -15520,7 +15520,7 @@ impl Game<'_> {
                     let PhysicalKey::Code(key) = event.physical_key else {
                         return Ok(());
                     };
-                    #[cfg(target_os = "ios")]
+                    #[cfg(any(target_os = "ios", target_os = "tvos"))]
                     self.extras_key(key, event.state == ElementState::Pressed, event.repeat);
                     self.native_key_event(key, event.state == ElementState::Pressed, event.repeat);
                     // key.smoothCamera toggles the cinematic camera.
@@ -15795,16 +15795,16 @@ impl ApplicationHandler for Game<'_> {
         );
         // A phone asks its root view controller, not the bundle's `UISupportedInterfaceOrientations`, so
         // declaring landscape in `Info.plist` alone still lets it rotate into portrait under the game.
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
         let attributes = winit::platform::ios::WindowAttributesExtIOS::with_valid_orientations(
             attributes,
             winit::platform::ios::ValidOrientations::Landscape,
         );
         // On iOS winit makes the UIWindow's frame out of the inner size, so a desktop size larger than the
         // screen in points crops the game off the right and bottom; with none the window is the screen.
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
         let attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]));
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
         let _ = size;
         let window = match event_loop.create_window(
             attributes
@@ -17557,16 +17557,16 @@ impl Loading {
         );
         // A phone asks its root view controller, not the bundle's `UISupportedInterfaceOrientations`, so
         // declaring landscape in `Info.plist` alone still lets it rotate into portrait under the game.
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
         let attributes = winit::platform::ios::WindowAttributesExtIOS::with_valid_orientations(
             attributes,
             winit::platform::ios::ValidOrientations::Landscape,
         );
         // On iOS winit makes the UIWindow's frame out of the inner size, so a desktop size larger than the
         // screen in points crops the game off the right and bottom; with none the window is the screen.
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
         let attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(size[0], size[1]));
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
         let _ = size;
         let window = match event_loop.create_window(
             attributes
@@ -18219,7 +18219,7 @@ pub fn run() -> Result<()> {
     let started = Instant::now();
     horizon_client::spans::enable(options.spikes.is_some());
     let vanilla_root = options.resources.clone();
-    if !cfg!(any(target_os = "ios", target_os = "android"))
+    if !cfg!(any(any(target_os = "ios", target_os = "tvos"), target_os = "android"))
         && let Some(error) = missing_resources(&vanilla_root)
     {
         // The game build started by hand (the release's zip), not by the

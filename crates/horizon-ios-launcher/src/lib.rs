@@ -53,7 +53,7 @@ impl Drop for Request {
 static QUEUE: Mutex<VecDeque<Request>> = Mutex::new(VecDeque::new());
 
 /// Bundled iOS builds expose accounts and game management before Play.
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 const ENABLED: bool = true;
 
 /// The native launcher fully covers the game's surface. Its bridge still needs polling.
@@ -125,9 +125,9 @@ pub fn waiting() -> bool {
 
 /// Whether this bundle carries the launcher, which holds the game until it is started.
 fn bundled() -> bool {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     return ENABLED && ios::framework().is_some();
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     false
 }
 
@@ -149,9 +149,9 @@ pub fn present() -> bool {
 /// Show the launcher over the game again (Quit Game, which an iPhone app does not do itself). False when this
 /// build or bundle has none; the launcher ignores a second request while it is up.
 pub fn show() -> bool {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     return ENABLED && ios::present();
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     false
 }
 
@@ -160,13 +160,13 @@ pub fn show() -> bool {
 /// launcher is switched on, since it only needs the framework. False when this build or bundle has none, and the
 /// game's own download screen is all there is.
 pub fn present_download() -> bool {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     return ios::call(ios::DOWNLOAD);
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     false
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 mod ios {
     use std::ffi::{CStr, CString, c_char, c_void};
 

@@ -5,7 +5,7 @@
 //!
 //! iOS gives an app no resolv.conf to read, so the phone asks the system's own
 //! resolver instead (`query_srv_system`) and the rest goes unused there.
-#![cfg_attr(target_os = "ios", allow(dead_code))]
+#![cfg_attr(any(target_os = "ios", target_os = "tvos"), allow(dead_code))]
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream, UdpSocket},
@@ -125,7 +125,7 @@ fn ask_tcp(server: SocketAddr, query: &[u8], timeout: Duration) -> Option<Vec<u8
 
 /// The phone's question, through the system resolver ([`horizon_dnssd`]): its
 /// rdata is a record's own, with no compression to follow.
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 pub(super) fn query_srv_system(name: &str) -> Option<(String, u16)> {
     let rdata = horizon_dnssd::query_srv(name, horizon_dnssd::TIMEOUT)?;
     let port = u16::from_be_bytes([*rdata.get(4)?, *rdata.get(5)?]);

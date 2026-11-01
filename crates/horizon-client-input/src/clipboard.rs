@@ -200,7 +200,7 @@ mod system {
 
     impl Clipboard for SystemClipboard {
         fn get(&mut self) -> String {
-            #[cfg(target_os = "ios")]
+            #[cfg(any(target_os = "ios", target_os = "tvos"))]
             if let Some(text) = horizon_gamecontroller::clipboard_text() {
                 return text;
             }
@@ -208,7 +208,7 @@ mod system {
         }
         fn set(&mut self, text: &str) {
             if !text.is_empty() {
-                #[cfg(target_os = "ios")]
+                #[cfg(any(target_os = "ios", target_os = "tvos"))]
                 horizon_gamecontroller::set_clipboard_text(text);
                 self.copied = Some(text.to_owned());
             }

@@ -1,0 +1,119 @@
+name: tvos
+# The game for Apple TV, and nothing else: its own workflow, so it never gates or delays ios.yml (iPhone and iPad).
+# The Rust game is cross-compiled for aarch64-apple-tvos, wrapped by packaging/ios/project.yml's HorizonTV target,
+# and uploaded as an unsigned .ipa. No tests run here.
+#
+# This target is new and Rust treats tvOS as tier 3: there is no prebuilt standard library, so the build uses
+# nightly and -Zbuild-std. Expect it to need work on a dependency or two before it goes green; the cargo log is
+# uploaded whether or not it succeeds, so each run says exactly what is left.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: tvos-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  HORIZON_TELEMETRY_URL: "off"
+  TVOS_TARGET: aarch64-apple-tvos
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_INCREMENTAL: "0"
+  # The app's own minimum (project.yml); rustc and cc read it.
+  TVOS_DEPLOYMENT_TARGET: "17.0"
+
+jobs:
+  ipa:
+    runs-on: ${{ github.event_name == 'pull_request' && 'macos-26' || vars.MAC_RUNNER || 'macos-26' }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check the Apple toolchain
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          echo "AppleTVOS SDK: $(xcrun --sdk appletvos --show-sdk-version)"
+      # Nightly with rust-src: tier 3 targets have no rust-std to download, so -Zbuild-std compiles the
+      # standard library from source for them.
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
+        with:
+          shared-key: tvos-${{ env.TVOS_TARGET }}
+      - name: Build the game
+        env:
+          HORIZON_MSA_CLIENT_ID: ${{ vars.HORIZON_MSA_CLIENT_ID }}
+        # No --locked: -Zbuild-std resolves the standard library's own dependencies, which the repository's
+        # Cargo.lock cannot pin. The workspace's own dependencies are unchanged by this.
+        # No `audio` feature yet: cpal's CoreAudio backend is built for macOS and iOS, and tvOS is the next thing
+        # to check once this compiles.
+        run: |
+          set -o pipefail
+          cargo +nightly build -Zbuild-std=std,panic_abort --release --target "$TVOS_TARGET" \
+            -p horizon-client --no-default-features 2>&1 | tee cargo-tvos.log
+      - name: Preserve the cargo log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvos-cargo-log
+          path: cargo-tvos.log
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Bundle it
+        env:
+          HORIZON_MSA_CLIENT_ID: ${{ vars.HORIZON_MSA_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
+          ( cd packaging/ios && xcodegen generate )
+          HORIZON_GAME_PREBUILT=1 xcodebuild -project packaging/ios/HorizonIOS.xcodeproj \
+            -target HorizonTV -configuration Release -sdk appletvos -arch arm64 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO \
+            DEBUG_INFORMATION_FORMAT=dwarf \
+            CONFIGURATION_BUILD_DIR="$PWD/build-tvos" \
+            build > xcode-tvos-build.log 2>&1 || { tail -60 xcode-tvos-build.log; exit 1; }
+          python3 - <<'PYCONFIG'
+          import os, plistlib
+          path = 'build-tvos/HorizonTV.app/Info.plist'
+          with open(path, 'rb') as file:
+              info = plistlib.load(file)
+          info['HorizonMSAClientID'] = os.environ.get('HORIZON_MSA_CLIENT_ID', '')
+          with open(path, 'wb') as file:
+              plistlib.dump(info, file)
+          PYCONFIG
+          rm -rf tv-xcode && mkdir -p tv-xcode/Payload
+          cp -a build-tvos/HorizonTV.app tv-xcode/Payload/
+          ( cd tv-xcode && zip -qry ../Horizon-tvos-unsigned.ipa Payload )
+      - name: Preserve the Xcode failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvos-xcode-failure-log
+          path: xcode-tvos-build.log
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Check the distributable contains no prepared assets
+        run: |
+          python3 - <<'PYASSETS'
+          import zipfile
+          with zipfile.ZipFile('Horizon-tvos-unsigned.ipa') as ipa:
+              if any('horizon-resources.json' in name for name in ipa.namelist()):
+                  raise SystemExit('::error::the .ipa carries prepared vanilla assets; refusing to publish it')
+          PYASSETS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: horizon-tvos-game
+          path: Horizon-tvos-unsigned.ipa
+          retention-days: 7
+          if-no-files-found: error

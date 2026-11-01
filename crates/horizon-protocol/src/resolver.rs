@@ -37,14 +37,14 @@ fn resolve_with(
     addresses(host, port)
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn srv_redirect(name: &str) -> Option<(String, u16)> {
     dns::query_srv(name, &dns::system_name_servers(), dns::SERVER_TIMEOUT)
 }
 
 /// The phone has no resolv.conf to read: without this, `hypixel.net` went to
 /// the website's addresses instead of its `_minecraft._tcp` target.
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 fn srv_redirect(name: &str) -> Option<(String, u16)> {
     dns::query_srv_system(name)
 }

@@ -142,7 +142,7 @@ mod tests {
     }
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 mod native_ios;
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 pub use native_ios::{Keystrokes, draw_fps, draw_keystrokes, fps_text, keystrokes_size};
