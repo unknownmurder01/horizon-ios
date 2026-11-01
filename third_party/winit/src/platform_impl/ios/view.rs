@@ -430,15 +430,19 @@ impl WinitView {
         });
         let this: Retained<Self> = unsafe { msg_send_id![super(this), initWithFrame: frame] };
 
-        this.setMultipleTouchEnabled(true);
-        let hover = unsafe {
-            UIHoverGestureRecognizer::initWithTarget_action(
-                mtm.alloc(),
-                Some(&*this),
-                Some(sel!(hardwareHover:)),
-            )
-        };
-        this.addGestureRecognizer(&hover);
+        // An Apple TV has no touch screen and no pointer: multiple touch and the hover recognizer are not there
+        // (the hover class does not exist, and looking it up ends the app).
+        if !cfg!(target_os = "tvos") {
+            this.setMultipleTouchEnabled(true);
+            let hover = unsafe {
+                UIHoverGestureRecognizer::initWithTarget_action(
+                    mtm.alloc(),
+                    Some(&*this),
+                    Some(sel!(hardwareHover:)),
+                )
+            };
+            this.addGestureRecognizer(&hover);
+        }
 
         if let Some(scale_factor) = window_attributes.platform_specific.scale_factor {
             this.setContentScaleFactor(scale_factor as _);

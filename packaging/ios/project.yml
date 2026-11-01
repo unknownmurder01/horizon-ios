@@ -173,13 +173,14 @@ targets:
   # workflow (.github/workflows/tvos.yml), so a tvOS failure never touches the iOS build. Same recipe as
   # HorizonGame (Cargo builds the executable, Xcode makes the bundle), with three differences: the Rust target is
   # tier 3, so nightly with -Zbuild-std; there is no SwiftUI launcher yet (the game logs "no launcher framework"
-  # and goes on; the Wi-Fi import screen and Horizon's own sign-in screen are what an Apple TV has); and no icon.
+  # and goes on; the Wi-Fi import screen and Horizon's own sign-in screen are what an Apple TV has); and its own icon.
   HorizonTV:
     type: application
     platform: tvOS
     productName: HorizonTV
     sources:
       - path: GameShell
+      - path: TVAssets.xcassets
     preBuildScripts:
       - name: Build the game with Cargo
         shell: /bin/bash
@@ -228,8 +229,8 @@ targets:
         TARGETED_DEVICE_FAMILY: "3"
         TVOS_DEPLOYMENT_TARGET: "17.0"
         EXECUTABLE_NAME: Horizon
-        # No icon catalog in this target.
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        # The layered icon and Top Shelf images (TVAssets.xcassets, written by tools/gen_tvos_icon.py).
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
 
 # Two schemes, so the run destination picker says which app is about to launch: the probe shell and the game.
 schemes:

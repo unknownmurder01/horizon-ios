@@ -82,7 +82,7 @@ declare_class!(
 
 impl WinitViewController {
     pub(crate) fn set_pointer_locked(&self, locked: bool) {
-        if self.ivars().pointer_locked.replace(locked) != locked {
+        if self.ivars().pointer_locked.replace(locked) != locked && !cfg!(target_os = "tvos") {
             // Public UIKit API, available since iPadOS 14 (Horizon requires 16).
             let _: () = unsafe { msg_send![self, setNeedsUpdateOfPrefersPointerLocked] };
         }
@@ -90,7 +90,10 @@ impl WinitViewController {
 
     pub(crate) fn set_prefers_status_bar_hidden(&self, val: bool) {
         self.ivars().prefers_status_bar_hidden.set(val);
-        self.setNeedsStatusBarAppearanceUpdate();
+        // tvOS has no status bar: the selector does not exist there, and sending it ends the app.
+        if !cfg!(target_os = "tvos") {
+            self.setNeedsStatusBarAppearanceUpdate();
+        }
     }
 
     pub(crate) fn set_preferred_status_bar_style(&self, val: StatusBarStyle) {
@@ -100,13 +103,18 @@ impl WinitViewController {
             StatusBarStyle::DarkContent => UIStatusBarStyle::DarkContent,
         };
         self.ivars().preferred_status_bar_style.set(val);
-        self.setNeedsStatusBarAppearanceUpdate();
+        // tvOS has no status bar: the selector does not exist there, and sending it ends the app.
+        if !cfg!(target_os = "tvos") {
+            self.setNeedsStatusBarAppearanceUpdate();
+        }
     }
 
     pub(crate) fn set_prefers_home_indicator_auto_hidden(&self, val: bool) {
         self.ivars().prefers_home_indicator_auto_hidden.set(val);
         let os_capabilities = app_state::os_capabilities();
-        if os_capabilities.home_indicator_hidden {
+        if cfg!(target_os = "tvos") {
+            // No home indicator on an Apple TV, and no such selector.
+        } else if os_capabilities.home_indicator_hidden {
             self.setNeedsUpdateOfHomeIndicatorAutoHidden();
         } else {
             os_capabilities.home_indicator_hidden_err_msg("ignoring")
@@ -126,7 +134,9 @@ impl WinitViewController {
             .preferred_screen_edges_deferring_system_gestures
             .set(val);
         let os_capabilities = app_state::os_capabilities();
-        if os_capabilities.defer_system_gestures {
+        if cfg!(target_os = "tvos") {
+            // No screen-edge system gestures on an Apple TV, and no such selector.
+        } else if os_capabilities.defer_system_gestures {
             self.setNeedsUpdateOfScreenEdgesDeferringSystemGestures();
         } else {
             os_capabilities.defer_system_gestures_err_msg("ignoring")
@@ -156,8 +166,11 @@ impl WinitViewController {
             }
         };
         self.ivars().supported_orientations.set(mask);
-        #[allow(deprecated)]
-        UIViewController::attemptRotationToDeviceOrientation(mtm);
+        // An Apple TV does not rotate; the class method is not there.
+        if !cfg!(target_os = "tvos") {
+            #[allow(deprecated)]
+            UIViewController::attemptRotationToDeviceOrientation(mtm);
+        }
     }
 
     pub(crate) fn new(

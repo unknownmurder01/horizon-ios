@@ -28,12 +28,22 @@ static MOD_API_LEVEL: [u8; 27] = horizon_mods::api_level::MARK;
 /// executable first and then the `resources/` that `horizon_client::import` unpacks into this very
 /// folder -- so both the assets shipped in the bundle and the ones carried in by a player are found
 /// with no argument to pass.
+///
+/// tvOS is the exception: an Apple TV app may not write to `Documents` at all (creating it fails, which used to
+/// end the app here the moment it opened), and has no Files app to show it. The one place it may keep files is
+/// `Library/Caches`, which the system can clear when storage runs low: a first home for the game there, until
+/// saves get a place that lasts (iCloud).
 #[cfg(any(target_os = "ios", target_os = "tvos"))]
 fn into_app_sandbox() -> Result<std::path::PathBuf, String> {
-    let documents = std::env::var_os("HOME")
+    let home = std::env::var_os("HOME")
         .filter(|home| !home.is_empty())
-        .map(|home| std::path::PathBuf::from(home).join("Documents"))
-        .ok_or("iOS gave this app no HOME")?;
+        .map(std::path::PathBuf::from)
+        .ok_or("this app was given no HOME")?;
+    let documents = if cfg!(target_os = "tvos") {
+        home.join("Library").join("Caches").join("Horizon")
+    } else {
+        home.join("Documents")
+    };
     let describe = |error: std::io::Error| format!("{}: {error}", documents.display());
     std::fs::create_dir_all(&documents).map_err(describe)?;
     std::env::set_current_dir(&documents).map_err(describe)?;

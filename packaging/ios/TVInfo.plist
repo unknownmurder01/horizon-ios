@@ -6,7 +6,7 @@
   Universal Purchase possible), but none of the keys tvOS has no meaning for: no file sharing (an Apple TV has no
   Files app), no orientations, no launch screen, no scene manifest (winit supplies its own UIApplicationDelegate,
   as on iOS: naming one here would replace the delegate the game's window comes from).
-  No icon yet: tvOS wants layered brand assets (App Icon, App Icon Small, Top Shelf), which are a separate piece.
+  The icon is TVAssets.xcassets (layered, as tvOS wants), named below the way Xcode's own tvOS plists name it.
 -->
 <plist version="1.0">
 <dict>
@@ -16,6 +16,11 @@
 	<string>Horizon</string>
 	<key>CFBundleExecutable</key>
 	<string>Horizon</string>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<string>App Icon</string>
+	</dict>
 	<key>CFBundleIdentifier</key>
 	<string>dev.horizon.game</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -46,6 +51,13 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Horizon looks for a computer on your network to receive your game files from, and for friends' worlds.</string>
+	<key>TVTopShelfImage</key>
+	<dict>
+		<key>TVTopShelfPrimaryImage</key>
+		<string>Top Shelf Image</string>
+		<key>TVTopShelfPrimaryImageWide</key>
+		<string>Top Shelf Image Wide</string>
+	</dict>
 	<key>UIDeviceFamily</key>
 	<array>
 		<integer>3</integer>

@@ -1,0 +1,1058 @@
+diff --git a/crates/horizon-client/src/main.rs b/crates/horizon-client/src/main.rs
+index 809640b..90f8399 100644
+--- a/crates/horizon-client/src/main.rs
++++ b/crates/horizon-client/src/main.rs
+@@ -28,12 +28,22 @@ static MOD_API_LEVEL: [u8; 27] = horizon_mods::api_level::MARK;
+ /// executable first and then the `resources/` that `horizon_client::import` unpacks into this very
+ /// folder -- so both the assets shipped in the bundle and the ones carried in by a player are found
+ /// with no argument to pass.
++///
++/// tvOS is the exception: an Apple TV app may not write to `Documents` at all (creating it fails, which used to
++/// end the app here the moment it opened), and has no Files app to show it. The one place it may keep files is
++/// `Library/Caches`, which the system can clear when storage runs low: a first home for the game there, until
++/// saves get a place that lasts (iCloud).
+ #[cfg(any(target_os = "ios", target_os = "tvos"))]
+ fn into_app_sandbox() -> Result<std::path::PathBuf, String> {
+-    let documents = std::env::var_os("HOME")
++    let home = std::env::var_os("HOME")
+         .filter(|home| !home.is_empty())
+-        .map(|home| std::path::PathBuf::from(home).join("Documents"))
+-        .ok_or("iOS gave this app no HOME")?;
++        .map(std::path::PathBuf::from)
++        .ok_or("this app was given no HOME")?;
++    let documents = if cfg!(target_os = "tvos") {
++        home.join("Library").join("Caches").join("Horizon")
++    } else {
++        home.join("Documents")
++    };
+     let describe = |error: std::io::Error| format!("{}: {error}", documents.display());
+     std::fs::create_dir_all(&documents).map_err(describe)?;
+     std::env::set_current_dir(&documents).map_err(describe)?;
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Back.imagestacklayer/Content.imageset/Content@1x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Back.imagestacklayer/Content.imageset/Content@1x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..6c18eb930f5fe4b326c225dc9c58448e6e184f19
+GIT binary patch
+literal 5655
+zcmeAS@N?(olHy`uVBq!ia0y~yU<ERn893O0RJF;evkVNP_dH!3Ln>~)y<y19puljz
+zz=7rA;r(78Hf|9r%X?RRAE=OlVbU}f5OpDyfeA=C%wXgIaTD1TKvaul1Benx8<iXl
+zgwd2RnjL^?U^Ea$17Wmw7_A~l+X<tMC16Q78VI9-FxovB?ISe+v%zQ|X*3W<y9dBD
+nFd7J>fiT)f8to&|w2vguw3FQ@(0BGnP^IJP>gTe~DWM4fKD1c>
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Back.imagestacklayer/Content.imageset/Content@2x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Back.imagestacklayer/Content.imageset/Content@2x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..45de819d03328ece0fb19abb1c82f2ae990324ab
+GIT binary patch
+literal 19021
+zcmeI2u}T9$6h&`h3~R_j1RE`6z<faB7i=`52@*tX>@55PMFcIDG-8*=+Qw2uEo~C8
+z(Jq~k&fau(BDznV(NC~A+vE)-1ZMAj@7!TdH#)0vX|5zGZml&pB`b@HirL5A>-446
+zo@q53TZf~UQ9YK^pq3P#@B8iH&BfXE(cbx+ee?V2-Bx|6bbi8xMPXJszi<zVe62<?
+z33arnyk8`}T*cSwmeWvIc2)3;)bST=l!T%rd?C?5Bs#5_7ukShunIhozyt8Wa2Y%R
+z4@?K(0eE0K01v=}Oa|Zqcwp@SJOB?&2jBsCU^)N~z=KQ%-~o7G?EpLg4@?K(0eE0K
+z01v=}Oa|Zqcwp@SJOB?&2jIa!!h`pNacVc^lHteGINCqSJ9|Z6PkAc+siay};nLlp
+z_vdEbGCyFKkVY^HexPg6Dt~Wo;|KhJAMisMkWeKkO@46r!S4Xkl03~JLh9|nQ48lw
+zgeF20p^4BGW&)v!&_rl*_`&Z0p^4B$XiB{u2u*}0LeoDCO_Rs{czt2J{%B5Zt#q1K
+HOFP|9z^ME2
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Back.imagestacklayer/Content.imageset/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Back.imagestacklayer/Content.imageset/Contents.json
+new file mode 100644
+index 0000000..bbb03eb
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Back.imagestacklayer/Content.imageset/Contents.json	
+@@ -0,0 +1,18 @@
++{
++  "images": [
++    {
++      "filename": "Content@1x.png",
++      "idiom": "tv",
++      "scale": "1x"
++    },
++    {
++      "filename": "Content@2x.png",
++      "idiom": "tv",
++      "scale": "2x"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Back.imagestacklayer/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Back.imagestacklayer/Contents.json
+new file mode 100644
+index 0000000..74d6a72
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Back.imagestacklayer/Contents.json	
+@@ -0,0 +1,6 @@
++{
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Contents.json
+new file mode 100644
+index 0000000..c939f9f
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Contents.json	
+@@ -0,0 +1,17 @@
++{
++  "layers": [
++    {
++      "filename": "Front.imagestacklayer"
++    },
++    {
++      "filename": "Middle.imagestacklayer"
++    },
++    {
++      "filename": "Back.imagestacklayer"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Front.imagestacklayer/Content.imageset/Content@1x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Front.imagestacklayer/Content.imageset/Content@1x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..951abce85cdea8a14e84890baa20da3611e6d3b4
+GIT binary patch
+literal 4036
+zcmeAS@N?(olHy`uVBq!ia0y~yU<ERn893O0RJF;evkVOU-JULvAr-gY-reZS>>%KJ
+z(6(4|5f_&!r)vPOs-S}4O{*@2gZ{><e?GA8HU{b%1*0J_8UmvsFd71*Aux18;DG%m
+zyY=a_8R0ILJM*i;K0gh_Z&>#ClTA3dZgaT&@88VXk|5Cqnd>F}9Y8FFS4m7D`h^e!
+zNWX#)0}GI9Fkln_i5_Bc08t#mLqqbLW$_u1dl`JI?avx9gIFeSf7kAV3jQve2?+_1
+z1jB*m$mcTVV2^?Mqr_+kjE2By2#kinXb6mk0JTHl$L#o}5kg0rH>^tr8SUxn=d#Wz
+Gp$Pz|CQx<&
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Front.imagestacklayer/Content.imageset/Content@2x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Front.imagestacklayer/Content.imageset/Content@2x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..7c542ce753f691dc0855718080c20d0f484c5ebe
+GIT binary patch
+literal 15568
+zcmeI%ze@sP7zgl2JH#YQMH(99is&B*1R=tUi*%8S8ZrnYD8b>Nr6R(^t*tFJf@o?8
+zqopAn6rzZJxm5Inpq8M_#m3U^2p?`}F2e7-ywAh)9`C&$-shHE9t;iGZEZFpvIhh5
+zFp(Zw$ZFB1{dea!QO{~nmPY1pi}%uyAi3pyY2B+@4xVT(n#(oEM~jcnl<VbV^UAC}
+zf&l>tKmY;|fB*y_009U<00Izz00bZa0SG_<0uX=z1Rwx`|1Y3cm5Wnv!w(0^-c%~-
+zmTs>2Pkiy$qbAM^vzgce3AJ2Jmb2GMQ!S<N`9o~Ykb1hfq<TyuCqg6fDltG-E=XoS
+z$5t2dFFOAUIk=DzRE`~;hPM$-A{Vd)5uk|v@<tU>V^jK%>F*KsJ%{g%tyEh4OmiD(
+zy;I)pJ*zD?&dT1*w4tkvCB$_sF!7de*YA(IQQcXZ<Zopii{R)GfB*y_009U<00Izz
+v00bZa0SG_<0uX=z1Rwwb2tWV=5cnm5NbC5P`}pv(L(w-3_J`z5UnKDbkalX*
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Front.imagestacklayer/Content.imageset/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Front.imagestacklayer/Content.imageset/Contents.json
+new file mode 100644
+index 0000000..bbb03eb
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Front.imagestacklayer/Content.imageset/Contents.json	
+@@ -0,0 +1,18 @@
++{
++  "images": [
++    {
++      "filename": "Content@1x.png",
++      "idiom": "tv",
++      "scale": "1x"
++    },
++    {
++      "filename": "Content@2x.png",
++      "idiom": "tv",
++      "scale": "2x"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Front.imagestacklayer/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Front.imagestacklayer/Contents.json
+new file mode 100644
+index 0000000..74d6a72
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Front.imagestacklayer/Contents.json	
+@@ -0,0 +1,6 @@
++{
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Middle.imagestacklayer/Content.imageset/Content@1x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Middle.imagestacklayer/Content.imageset/Content@1x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..f37e5461182279baca2893a3013838f79cf2eab4
+GIT binary patch
+literal 5037
+zcmeAS@N?(olHy`uVBq!ia0y~yU<ERn893O0RJF;evkVNvC7v#hAr-gY-tnCz5-QPl
+zv3m0=*FOvY#<Kd{Y11w`vFc8n@Qlq2${Di)cvfqz7oK5Jns8+D^EVCppL$=_S*<h#
+znluVVLtr!nMneE=2sBK2$-;19%e7CI|KH2kJd0V^(0hXeqB7;jYIO#dwOgOv-v0RJ
+zw!OEn?TYX3f6w=O=KnW0|IYe+_s;j<e{bg>Uu-^SgP=5H!(vNoMuw6#Tc6D--dp*(
+z;Q!anm-BDe6xHwDCm&x|YW2o<-S+Q~-@Q9|<NELN{Cjumq>^oFc1>14=9Y8Bjo|?Y
+zivt74t!<Xi=iHxv{`varQOV~X@B6a<n$+{pm3Q*4f8OT%|2L!bMnMJ(8AbtyP5ZC(
+zpMF{tdHr>1Z*u+H<5J0IwjMhg+z4{J%tQtbhS=h|nzfm7KfW&O&o4jwaCiSkkQ1A4
+z%>jFD7tk^w;1FhD1X2n<3@kvZ!2oD55F8qn91VogltAC?@a7E*!-Ue<?AYTH*=tSt
+zYuf$)|6A?O1kUhEz<k;COs4quv;O;c>}7vTCCgdlt}#7kcD&;EhvWUleJ@`gaLZv~
+z=yPLWX;^ZcKl}f?>Fvk&&%38Lee1Kr&&Oi2=e~RQ?AGyiLpl2jGf-It%H|9WJnMfj
+zJ6wr6J^SDPe+Se3?iaSfi$1V|!AATEzs$+7;N{iT;qz_l|J_lvtNQ!vYsJS$NAK%F
+z3cg-o!RMI0_IzFakI&CvKmGLcWy!7ny8hd5x6OV3?%%J6v-Rud7IVqm=;&oQuyD>?
+z28LPJ_Ss8j*X_Hu&-&P%Yy0&5S<RA^846sO6c}3Sm)`eFzQ4`)j>K<?<PK@DCdFJo
+zaG=Bj6#zjCX9I{5P-9>MQVuhK)&oJ}sN`rMjHZME$qqMeaxy4n=ia{IfBVMVq@JzE
+zidey|s}5kBrejvI&CazyOJbite0<FAdD*OaoM5>bK)H-vx!HfVoqt<1@AZfLuQA8W
+zwr^dR+%wyq8B_p+!HExx>=|5ujlt8??Oxkg{w!K!x%|DwVNkg{3PwX<Gz3ONV0eT;
+b!~cW!3|ktX_)C0W4f2tvtDnm{r-UW|JG2tK
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Middle.imagestacklayer/Content.imageset/Content@2x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Middle.imagestacklayer/Content.imageset/Content@2x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..01b23e455b8150fa1eb2aca7ba8106985dbf4c96
+GIT binary patch
+literal 17204
+zcmeI3e@t6d6vr>ME(HTANK%5dc5cb^ALdZDRSFbDS=Dt$XJ&8$t}59|J39sg)2?rY
+zq^q)KQIlm`9d22IiIi%D!JyFA8fs)P2uax}U~$sg*iwFoWh-pn+xC(8umA7|=lpZ;
+zOYb}Hyif1D_k7RG)4wSxO-{;8LI@>`_m#Yb5b16~tSz|d`8%}@q2h?Rr08J%L}0Q=
+zk@Zf-tE1sxr?xYWNbT8QB)Ti@)s5nuFhiv0CT^W<cT$zb>0cdHJTU5g*4G{!{HOL@
+z0(Jxj1b_e#00KY&2mk>f00e*l5C8%|00;nq4JE*S{%dmmmt1Ajv-htHd?y~a87fQv
+z6O!kJKdkw<kikD<%B`^SF1YJ@O|_kKbBez4r9T%Jj}0~Ch1ZT*`+2AOr<r$B11x;D
+z>VArZIBDtXbQx>fFJIns=yvwb(|5gJemCY1u6W%~IA=!vGr_&QmS%NdU*FA!6=m~+
+zx24KiYctS3E;1?Xg8hTMW>{b?%u2cKDw9f{R{UNeGb#6G4LBVB@8!Idc)Xr079v4@
+zXi{o48mpvrEK|C2Pxz=oIFM0eQijqguHAs$*&5i0fskm>7%I5?qPj;PwnQ$CXK8t~
+zpX%yp<aj8ye1?cLQDdc%6JsVikJxk{X_?e|pS>M1=>v+Nz^D6&nMlHm8Gj!lkYZNE
+z5XE~4!6guY!m|Np6hiP^AXq@~LJcb|g8c%g0kE+`dVse^$fF=VAo=oUN)KXM>N%OI
+zb9(J$a)E01K!&3+Auf}Qi3xnnqv@8w;Jl|a?D87Nit0ODm+(O#;uy_Ed0H-39@G+_
+zC==?e8q23;xBvLd-S!9;RKo&SSyyE4$8uU93Fe>TVSi`el?{!XowGNl6teeCy}j>+
+zmW4eQOIgkIu-ZCdHan+`Z(HaX@c6i?6sx)&xZl*)X&GD+_fOD@kRAXn5ZEvR#+!bk
+z&PNs&X9vw!3N>@=Rr4Wp`8m$c@>PEt{RCV%5S8btGL!kVdMR?CH4<s%a5%l6&tKK)
+zbiq%A4;LJ#Djo@a>BmtWGmjJnD!Ln=#Er-~5#AvkYLx|lN-kKWZpnj@6D+#0AdD6$
+zzWGSbk^XjLf499fAZ^|{i2|%T64UU{-u1!(8rcR_1gM2XlbsoJUC`F?LB?m-zP;X*
+zEe#dw^WR9?&E*GCm!PUi=h@bcCr`{a)0W7j;x`S-fPjF91(X4q2T(ZNT*`n+k$*jE
+zP#}S2kW2(9kiarX=D|j0gCk=^%bd>%$=Y@)UZ3~&4}2<gb}&5#PxKXRRqPe)FNgoi
+z_2&9i&+b{7J#$#rzMQi@LZ|ZWCpW=$Dphj#$E=4ZulVkS*W77To;E7D$d6z^00;m9
+zAOHk_01yBIKmZ5;0U!VbfB+Bx0zd!={7(Wl&B9}6GB4&Gt$!x^If(cbNlANgrS@Oa
+Co`d}W
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Middle.imagestacklayer/Content.imageset/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Middle.imagestacklayer/Content.imageset/Contents.json
+new file mode 100644
+index 0000000..bbb03eb
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Middle.imagestacklayer/Content.imageset/Contents.json	
+@@ -0,0 +1,18 @@
++{
++  "images": [
++    {
++      "filename": "Content@1x.png",
++      "idiom": "tv",
++      "scale": "1x"
++    },
++    {
++      "filename": "Content@2x.png",
++      "idiom": "tv",
++      "scale": "2x"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Middle.imagestacklayer/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Middle.imagestacklayer/Contents.json
+new file mode 100644
+index 0000000..74d6a72
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Large.imagestack/Middle.imagestacklayer/Contents.json	
+@@ -0,0 +1,6 @@
++{
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Back.imagestacklayer/Content.imageset/Content@1x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Back.imagestacklayer/Content.imageset/Content@1x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..ea381a44c6f1a3218a1a2461cd4d7cc401fe1eb5
+GIT binary patch
+literal 763
+zcmeAS@N?(olHy`uVBq!ia0y~yV4MJCf8byPl6p2qN(>B4hdf;zLn>~)y=o}PV8Fq!
+zF-UN4-j8rjE{Pk$ocn9`%r9j~c<IH^(8!RWz#zfFz{UhbH06OUf!jc19?Vk^`>4)?
+kdjlM1H0F)ah%v}?Eo9bt<MAT|n5Y>%UHx3vIVCg!02dN@+5i9m
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Back.imagestacklayer/Content.imageset/Content@2x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Back.imagestacklayer/Content.imageset/Content@2x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..cd8f3cf4c5f48200bf12f275aad49fabe407fc67
+GIT binary patch
+literal 2244
+zcmeAS@N?(olHy`uVBq!ia0y~yU{+vYV0^&A1{8^9=lsgRz|rmL;uunK>+N+zK?Va3
+zhK)gjd-HyTbLvHSsQmf%vF;ip1A|0?Do{NS2LnTb16Bqz6I2R?At3-%3=%<M9B2TF
+zf<#amY%EX_6o!EUP%%gZJEMUS=sJ)TDg)$Fum}o+3T}t{2G#9w-=Mf1tcGfCR{;jZ
+zXbd3I(`XE^U`zV&%z%>g;hAAH4?v3}DkL9xxrAEyjK%=4q#CUU7{DnEr9z-e9i}pD
+d>w$(^sXr%Kc{siHZUXv|!PC{xWt~$(696AR$x;9S
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Back.imagestacklayer/Content.imageset/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Back.imagestacklayer/Content.imageset/Contents.json
+new file mode 100644
+index 0000000..bbb03eb
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Back.imagestacklayer/Content.imageset/Contents.json	
+@@ -0,0 +1,18 @@
++{
++  "images": [
++    {
++      "filename": "Content@1x.png",
++      "idiom": "tv",
++      "scale": "1x"
++    },
++    {
++      "filename": "Content@2x.png",
++      "idiom": "tv",
++      "scale": "2x"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Back.imagestacklayer/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Back.imagestacklayer/Contents.json
+new file mode 100644
+index 0000000..74d6a72
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Back.imagestacklayer/Contents.json	
+@@ -0,0 +1,6 @@
++{
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Contents.json
+new file mode 100644
+index 0000000..c939f9f
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Contents.json	
+@@ -0,0 +1,17 @@
++{
++  "layers": [
++    {
++      "filename": "Front.imagestacklayer"
++    },
++    {
++      "filename": "Middle.imagestacklayer"
++    },
++    {
++      "filename": "Back.imagestacklayer"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Front.imagestacklayer/Content.imageset/Content@1x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Front.imagestacklayer/Content.imageset/Content@1x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..daa5ad1f97510abb0fe21c50bdd4541cb82723b7
+GIT binary patch
+literal 542
+zcmeAS@N?(olHy`uVBq!ia0y~yV4MJCf8byPl6p2qN<e|9o-U3d6}R5r4diVx5OBSy
+zxwi3YLxjwl-B&lTX*9Prw(uAAwR|tWoHEG`sA<rH4}7}Dvn3fA8q(tw?(5p8F)YaH
+zQLY10G866{=4NTAa`+~h$;NPsF;h1tkuhM~3}6s2Iyf*02r$HDr0hDx^uWo%t-O`>
+zKx@Mp$$Ddk0KOCZj${GD>w(}uX2wD9eXI_AXUSOdUL^Fyg^7Pb@}91KF6*2UngC!t
+BLU#ZF
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Front.imagestacklayer/Content.imageset/Content@2x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Front.imagestacklayer/Content.imageset/Content@2x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..f97e313c025bc0f994a0fa55427fd46a0a7ac698
+GIT binary patch
+literal 1672
+zcmeAS@N?(olHy`uVBq!ia0y~yU{+vYV0^&A1{8^9=lsgRz~=Ai;uunK>+KywK_*9@
+zwu?{l(hsnE1(eAu2{fyEY24uC(+Jji@A+f*dJiR_u2C==0)sOI8tNw=51cItc3i{K
+zCx65Eje%_0V?Ra0K@45SPgTcFm>C!@2r10mIGd4y;l%@HF$M+&2cRS)6E+5i08|Qv
+z;m`mS1&M$ee+*VFIs+8g!gAt<@>vLD&PS*{^L6#ofI>hpZBpn{HWmnblpGC#VHyGv
+Z*TvHsgfdD_dGLaK=;`X`vd$@?2>?47Knwr?
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Front.imagestacklayer/Content.imageset/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Front.imagestacklayer/Content.imageset/Contents.json
+new file mode 100644
+index 0000000..bbb03eb
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Front.imagestacklayer/Content.imageset/Contents.json	
+@@ -0,0 +1,18 @@
++{
++  "images": [
++    {
++      "filename": "Content@1x.png",
++      "idiom": "tv",
++      "scale": "1x"
++    },
++    {
++      "filename": "Content@2x.png",
++      "idiom": "tv",
++      "scale": "2x"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Front.imagestacklayer/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Front.imagestacklayer/Contents.json
+new file mode 100644
+index 0000000..74d6a72
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Front.imagestacklayer/Contents.json	
+@@ -0,0 +1,6 @@
++{
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Middle.imagestacklayer/Content.imageset/Content@1x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Middle.imagestacklayer/Content.imageset/Content@1x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..75872950c841fce71cdd4746184ea441725728cc
+GIT binary patch
+literal 1430
+zcmeAS@N?(olHy`uVBq!ia0y~yV4MJCf8byPl6p2qN(>CFv7RoDAr-gY-rb+45-ED%
+zVeu>f#|IyOJi}q=<e{wS=yFUrXM>>r!C-;i-$gw-D>#*s<|QyOE#bY`#MXcJ^0w>i
+zcBMDVs(VN;ShsQa_513P=kk6}$@>|;UH7&i&=Q)11L>3X82Q((GE(|=e#4hJGq*n9
+zTrPM~w@x|TuS|^L0SnXr-(Tj=d>jA#`TnZPFOT?VzujhJEFQ7ludn~};j>TU>ps4^
+zdj0$Q&HbDIKd<?G^!4=f`z!v}T{bFSKG`EI)V}ZLvY%DE|GuApZ(nV7Z0OGS%MI#m
+z*rqqM*Cj|6|2caxu-t5&-=gRTXXji~`lXljr|eI)OU>Tp{BE%>TV}of9(zRI-`_v!
+z&c}DFyIvSQ`g7P!DejM@(z;wjmKOQno=?90TIPHE?Y5&v_WT*gj~|Z>y(@R%hkW#r
+zlFE%U#diG9l4#3Wdv5iimCTF}Gv~M%6?b&Zy?^Yd$dccspBUKQf4W@z{iW0!qwjyC
+z8{Q?$y^Y{yU}9=$U{FwC;NSous`LKD1O0wHAoT0YVBIY-vZwBdZoKm5yZ02?)`kxu
+zPb|uAey_b>x?8>}I{U9hnV|W^YWs?``>rWzeTO&Pej6TY*_XV<tbdyb)1hF?+B?3%
+zbIyN`S-UkRVehPECsysc{rzV2>eU?<>$@svEvq}eQ`va&D!nM}<pOg58c(P`5M(ln
+ziHVsLGWXikr$^6Ke>mEG`P7~hmoH!TP4la^`+d>%$mU-k7V7C6PoJ@S>*a5+LSxdF
+zbucjaDSUADf7JbcuX6>{f0<(WQ*V&c<bj8l*4D3AWqn<j70O+6XMJ&5*|zWXvAb6N
+zQcYjK>gw+D_hDtC{Rj1hK25l9V{DwgdFA~3cWVD^TD@bo_>JaTm#sY?Giv^ApFH``
+z_rI^-gqy7X{c3g2`}_HI)?5GF&C0l5u3OG`&*uDHgFbWn>YtbQr#)L6d(8RMagoY`
+z@bKH~;-6kLIbZwa9pg-`Rr0?+zRKGDU46nCnN8h`SFT!>^?m*JO{=f{5wl`CH2Ko5
+zec9Y|o3xc~Eu3?B(WbBW&+j{ux@W$;+?@X&9PlV-VnU8`D)J5-mWW}Jb9H^aYhUV_
+zoxg)>L$luosIBj~_O-Tq#`LHSIT|c2%M0JU-E>-S-q~PjC8P5AjiL5WZj}D6Uv%!w
+z!q=Z}n%s4r{d?~Id(&=y&Gi51@%yIggNJf^wT(CL`?+l1`mo#a_0d<uxYtxm3)-K2
+zlb7HB|K~H`x;^!CYv<H%zPV@TzH{+>=U?f)E8GA7ol^0NS#kU8{`H@k^VW#r04Gb`
+zgU&tC>#qxLj7!*By5{=p6KBd8iql=56m522b3O2P*&`;TD5oFu!N*$mpLybQSdy8+
+OMWLswpUXO@geCw=4KK|A
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Middle.imagestacklayer/Content.imageset/Content@2x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Middle.imagestacklayer/Content.imageset/Content@2x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..ef0b62f74d0b5a6600b11200b02d95b0f53f6f75
+GIT binary patch
+literal 2637
+zcmeAS@N?(olHy`uVBq!ia0y~yU{+vYV0^&A1{8^9=lsgRz$N18;uunK>+NmBJn3|)
+z;}5^jl?<BX8fhk=epF8J?zQMAEGKQZ-O^gSq<G1B)k#VY-xzK`;fU7gOpNSFJw4~=
+zJ>3lEXlot=mHF%jYd#(R&ffNGViF6`_)#zzL*TboEMo!Bs;u?%%4bG~S+BdB%LjDk
+zhGaWN#y+Rex%>JoR`1@uYybI3yWjKd_O3Z|;`s3!H6LC7C2qBU|7}~Cy86ZyUAy+z
+z+djS<|NQCGr&h-9s~Ow#3Rn*`wjZA`^YQxq>;HfKnJ#|+pB?YzpIW~x=atU6_V(rF
+z?mU_6|NA=DuU>WfOxjWZTYFERx%U0_`}6Z+{yhFyclTU)t@-7<*;{v=xgWQ7e`m-1
+z)vL~*IoZ{~z<47$cDldPqsp`+24_BBH1`e8>7O=T?Do_>GHn(2N@KtL)!A(vm2Jo)
+zICJL)aRmnkK9^8m-9@Xi?&O#i*M9Sz?fXUW>G^`P?SFRMblG}s*|jM9%g)=*E-Mv$
+z==}m{yoJcjnLGd9yWK9IF6lXQr|sgSWtM;K-pn&&?{j+&$~KHl3=A9s*cc8CKv9qs
+zDuW4__Q4`33;_k8Vvq<51Ly#V2r7exgMk4of}H{MB?ALU3Y7tJDOd!BK?S$NeS_k5
+zxNlJ14pKwN?f;~jwHf*xLqlD+bYz5HO{+Q+CMtQmc++m{zdNeWeeV$!41C7K!g1iC
+z$O%vJi*x79(G%~kwEJ}|^OfH;!Pi~I&2O{5S=dLqZMU?3-L`LjdhM2LbLW<Q{P4n5
+z5@>yULRZI(wr{a6e?C~)U3>h);(Ym`;~kfuYOPwfyMMp^?Dv;%Crc|_wm)t-Z*O&l
+z`Tg)chKr)tJo5GV|MP~*GiG4e-e@dgJz%(F*REIV*02BmbY}R>m$4sWV^Tu5yRR?R
+zHLiWd3RFZEsA&S3ykeD|(yw@>N2h1b`}qIdHKXD!xBSZFl@{G@zq@|@`s1@_&rUN1
+z2Kt+gt5?6u%iFZKX6L`6oS)yHUbvSRRaR`1Egz_xEGhZF_T!&N%U7K`qoZ9HRFRT)
+zEr0#Bc-N!%cXfTg>=Xal?#(`n*fn)~cASWR%O|tzpeVy}1>^QNk4o08S~V-Rp-1#8
+z|6ij`Vq&+izT4Pw;&S1vT_-BpPPE?@=jYG2>SknOd5{p|n)>>8-nsfmL4p_U{+#D~
+zzvcG3dB*o;A81r;2L=H=sxcY#PPp)Fh?423o^UZU9b5z@)4{VLdAaX5s5}*1*|p-v
+zzu8ZJDlJ--R=uxQW>3+*+4<$$ErEvfd8d`l+<BtMuz1=0e|hzhaVg8vKlhc)bPmx`
+z+N7kMzPtLE((@|2hS>dTyO|zr2z5)jd+*-5Pk;VATC>X5=84YyTK{<=duwOkEvo$Y
+z?&jv2)ZO;)->sXszyANTFK=@G?cQHe_|M4rel#yIktev<FfqxruDZ4Qd2HG*zXKEB
+m<`t8b_D3}hkr0@%_&;N#X+g|U-lL)*Cwsd3xvX<aXaWGxPb$X%
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Middle.imagestacklayer/Content.imageset/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Middle.imagestacklayer/Content.imageset/Contents.json
+new file mode 100644
+index 0000000..bbb03eb
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Middle.imagestacklayer/Content.imageset/Contents.json	
+@@ -0,0 +1,18 @@
++{
++  "images": [
++    {
++      "filename": "Content@1x.png",
++      "idiom": "tv",
++      "scale": "1x"
++    },
++    {
++      "filename": "Content@2x.png",
++      "idiom": "tv",
++      "scale": "2x"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Middle.imagestacklayer/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Middle.imagestacklayer/Contents.json
+new file mode 100644
+index 0000000..74d6a72
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/App Icon - Small.imagestack/Middle.imagestacklayer/Contents.json	
+@@ -0,0 +1,6 @@
++{
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Contents.json
+new file mode 100644
+index 0000000..9244675
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Contents.json	
+@@ -0,0 +1,32 @@
++{
++  "assets": [
++    {
++      "filename": "App Icon - Large.imagestack",
++      "idiom": "tv",
++      "role": "primary-app-icon",
++      "size": "1280x768"
++    },
++    {
++      "filename": "App Icon - Small.imagestack",
++      "idiom": "tv",
++      "role": "primary-app-icon",
++      "size": "400x240"
++    },
++    {
++      "filename": "Top Shelf Image Wide.imageset",
++      "idiom": "tv",
++      "role": "top-shelf-image-wide",
++      "size": "2320x720"
++    },
++    {
++      "filename": "Top Shelf Image.imageset",
++      "idiom": "tv",
++      "role": "top-shelf-image",
++      "size": "1920x720"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image Wide.imageset/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image Wide.imageset/Contents.json
+new file mode 100644
+index 0000000..2c58500
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image Wide.imageset/Contents.json	
+@@ -0,0 +1,18 @@
++{
++  "images": [
++    {
++      "filename": "TopShelfImageWide@1x.png",
++      "idiom": "tv",
++      "scale": "1x"
++    },
++    {
++      "filename": "TopShelfImageWide@2x.png",
++      "idiom": "tv",
++      "scale": "2x"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image Wide.imageset/TopShelfImageWide@1x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image Wide.imageset/TopShelfImageWide@1x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..071f26a16b7bb9e1195e8f8473cff5429445ac28
+GIT binary patch
+literal 7464
+zcmeHK{ZCU@7(VD+h96+!K02-9bWXN8z;ptog?0;@k|-$CDHRG@g&4S2Xejpck}ZZ!
+zv0cKp)|C&JWpjyqL>*kTv{ebcE>tjaX(_c<sc>bbR_O}Ge%zhHep#~Y57_Se(|gao
+zdG9$--sgGG^X2aR?JJh9UJ3wMk+&na5P<lV04%!m(jvHmTr5fffbPr7{b29OQLppH
+z?})AB`m^pCJNcE=q0L>h^p#HW;eE+3cQ6#EGLttvdYe9Z@G<KE{pZy0%a)0cREY1K
+zE^O$~yqPiQx-!g9h!!?~eCt$`kMO@B>j>z!7%O}XS7_892mb|QpYFYd<owRG#q-(v
+zT~q=n5MVD*AW$Gsnn1DOzsv#zTLQp!n!Dzzh3S*V<JFnC?bwjyYVi|kJRxZ%CX?Zy
+zys;brnxN6)EngMfY2|I$1i;gQ_1ZYVbvBDS0-Jp%@~kjyz0ju2!epVE5YI6_{p(;s
+zbVBBm$>nmMN)RbV9O72OhPplIbEhxID6Lid-fAW0rtCU0SU`sR(Yc3rYv}I+@O6AS
+z0J~@RYIA}QKIcS#;INOopBOJ;){%+e0E&j|P%=@iRww)suvlpBj5ZEAXbSor%pO*_
+zZpyRu{s_*~mAweS^4P9VPLB<oQJ1bu<@fdK(I0u0*=%+=Oqgi=EiwbYq$^1&k38;A
+z#8_L(@oIU%fR!5Mlk_-H{{}oAC`i$GA09GIg_Ob@Q|w`dYc?{rvh)g*=r@+8X!K{=
+z3)am<)_sx$;gFojn7=(xLn8(Qr5O|m)a3j(79gf7eF*^dml2()3KJNlY}J1JT6;(u
+z?Y7eKY6If0vClAZUVgw|Ywx)<L3do-50_i8kmH#<lW)kfGE*E%d&*!}UK}`&m|7a<
+zt8MG?v(bPTGls__w^Jjd<2AxzlQ|tf+D2pwiLFHOX*+@Nj}wRs!;I5Ur|f#iTI)~q
+zs;N<q-*!kWqTbbu0XOokzrsg;6RR0Clr;u!yP^{;U!Q`GYyHtz(}?QqXka_%np1UQ
+zJoC3<S-*`}D)Dr<LM<-1MOpDpp66^s#6`L}q^E+jst5||9EN&7U64qwEjqT*)dC;P
+zG=Eg{fT%AwkH9A~DRk7~jhR3gMgJdThHz|`mo1$7h&NGl?6rmb)+k3hcN3anAZTQo
+zSG)7kLgMc0<r7yDEbphop`9ws7;Zxc;RoChFAe9pq7fk)u(|YWZM6*nfl6ZFo5)BK
+z-FDG0M;QJgy-!K7&=V|Gt!AJqo833(P9hxz=ycOo>{9*(=*EwRHmmPL^IQK5li*c0
+z;*p2qPJtdTOUK-O%ICqcceDocIf+=&d(UfW@1ALJvrCoJ!NWsHY+~Q(8J^@=p!9pu
+z)Fq-$R+Q_M^1fI$<Y_*~Bo5St_w;w0wI=$SCa4R?LOi2A0f1T$**m)_a~H#JZ*x6@
+z=Wv$)g+uZxSSl7fsDuK6>I8}f|HuLd0&nSQX04z~q!SHE8WK5}Uj8KY`bgDm7DLbo
+zXDe+D0A&kSpe9>|<G5Q|GE1|V`}kc6&$b<`%+ATV--%}rSq@Y-dV8JC8|Ul!6yB?F
+z_JJ8io2aw8OL(unTjf5X>I&pA38Swri&3Cfv=X}*P|NxbL9fByqYJiMdHgB3V5FrV
+zoNrjbJs0yKFu31Q2?YYx2^0$`7EmmpSU|Dh?<^Q4L65lo8b5z;QS3$DNBOy(AC`Ug
+ECj-3fWB>pF
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image Wide.imageset/TopShelfImageWide@2x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image Wide.imageset/TopShelfImageWide@2x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..aaff3539cddaba23cb2fecefd52755477ff82ea1
+GIT binary patch
+literal 23649
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image.imageset/Contents.json b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image.imageset/Contents.json
+new file mode 100644
+index 0000000..dc08a67
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image.imageset/Contents.json	
+@@ -0,0 +1,18 @@
++{
++  "images": [
++    {
++      "filename": "TopShelfImage@1x.png",
++      "idiom": "tv",
++      "scale": "1x"
++    },
++    {
++      "filename": "TopShelfImage@2x.png",
++      "idiom": "tv",
++      "scale": "2x"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image.imageset/TopShelfImage@1x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image.imageset/TopShelfImage@1x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..ad9ed8e52fa23cd12c93bd252d639ce9feec6513
+GIT binary patch
+literal 6664
+zcmeI1>r)d~7>5ra7wJ%J9V^Hs-l`p|V2DDH8mObAj%~EHBc&3MZUJe9M8i!d*<i&%
+z2TYu4F)~tOi_^6Af<z%`B+;T|oW#U7Z9rDCWKvmi4Oc^iT(-OU(7(YtyI+21&d#1a
+zbM}3o_p&E<akoZAE{X&IL~Y-;`BMPGYXAs-7!gd)_$z1c01#{5zWKw?st25dcYa&*
+zh<DrmMF+kvf&XV^)kpJB2-eSU-L&{F+mgLM{KHx}a_j6nvu}olKil!%*_zm<rr70Q
+zp6FR#H>w@<JRj(Y&wWc7<;&P*_q3e<`ZBT4iT=8Kz0LE?5K6ub01p4+yMe*^#aSWL
+z;PkxnL6mNbct{CYK4*VG-ws|E(78d2D6OdlQIuwFstKcX@e=xR`sir0p?raM831Tp
+z0PtF%@@~;w0Jzwp8x2gZ_zjO1(PQg+yK<A1+T#wk)N!>D0BkAA{${feR!4|d2)TbS
+zKn=E%nz|nYnP!T|bcCyo7*#6Z4c2SjpOl(hhi3lyd!@wPJ;rP6>r+E}cjGq`^%EVa
+ze?TE|Yx<N*7AHdzudiRo_fP4(cr@XxYvb!XgF*9gGU^CcwADMq8KQBeWK!=Drw?W<
+z7|yk}dndCQL{FyQ;yTjtqnX7rsJteFT;j`?9L_xBs?9%o!)b^^Qm|Fj&ZN{j9GOhU
+z&<!vcjGgX1Xgb!@(~}HO815Z2oAHrK&$t8G%7D9Cu4avS{EcoK?0VKHo&(qkWCR=%
+zCCOd(0?h%WvJ;5o^_`_iW&26<frg2zrE<fQ3yP(p{!Z4<LI9fW6cXrgN^>z_2Q(L7
+zRW7#ktPfU^{(A4GwEdD>%;C9xB?|fBE4V@^Ekyb5irgeTwKqk{E9F@$nxNIV#iB(=
+z^*+)2+A)vC!jU~umC0Qx8@Gf2K_cSozZ?v1=NJn&N*!q^jMwKswt0V-C(Ez#2ohGg
+zod;Lzef|2F-AAvSGWfdq$gEYKn0KqXYGXlnHwCK6<7o91{M_-mw>Ai{EhR6KZA9Ef
+z00cixAu1!^YfG~o#++hQ&NNkpK+n}aRPv(LBbJCWQakd-(=oa22p%mVqRAaLsMlg5
+zM}fyo%s!G3Ud+Eg2nbY;rzmmR5*M&ah0Zy#jL?Mv!3Kv{J;aP)K?eYUeKQeD0{7=K
+zPQON3e!n!G{5aI5&^YZWm;M{KX3O>jfuZtVm9a2=q;-xz)NB-4kH+?ffuRe^hw@}y
+z$pQdOLQ$Nd8J(S0YbW=P4Z4vJ3O<fEbPblFgg<&3c>r?|<E^Pt4LW0D47$ZFsw{I|
+zU7Ez}AYP8_gjEd{O?A9bz^-?GcX1_IYjL3lCYE~!pB7{eYg?FEvWm<yMIM76{DNgN
+z)+0SnuCrL!<HTu4wd=m?U_(VDS(jn$r|b!&DkpSxYUc3C{B3LV(G$m>3QfisD18dk
+zlM7BrAm|Vox}kFx&0plMzw&1m>q0dpMI4XoTs){@<*W%5dLWdp=;&&euH-2myrNx<
+z)Ey-EH$XYob}6%$ZNDdTec$K%W^F2-Q(TmDrXm4irjkrp7RbU&(Y8Ju);wT^JuQ4(
+zmUix?ak#k;cfp96%`!9_RHJSUmBgYmM0cC^I@yE5RHaA^lvFHUT5h^ArV)#*LLvs~
+z{Gq%kFMs-Ad{q>g?UrZetquaWM}AR@_6WJrEg@jsE2^DG9U1L9wClXWu0wY(=~fJB
+mp07nKhHkn4Pk%SuB|ziZOE<IpB?~E3Zr{S)d}Y(VZ~p~<`gooI
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image.imageset/TopShelfImage@2x.png b/packaging/ios/TVAssets.xcassets/App Icon & Top Shelf Image.brandassets/Top Shelf Image.imageset/TopShelfImage@2x.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..503d9beb4a6bfdc4dabd5f6f04d726393f5b50d5
+GIT binary patch
+literal 20424
+zcmeI4`BPI@6vr=AD}n(jS`{duwQ8$E(lLs%YH{4gPzx<GWsj*Ei9`X}A&NFS1aR6Z
+z6k`&8QYlUd(xG4(iHM055g7&u4MZuBC_%PV2|}Q65yJF8kU8&%yn9~mTPNq-@A<rQ
+zbLDHsK8m%YHA0ATV1K|j2-#uH#l=>Z*eaI3_Ai72^A7~<4o?1iuxoeT3YIg!=eGg2
+z!<x(X%g!k4L^i5Nb*Gkl@D2q&KiRi^Xyl6%FYbG`hD&VfD7T7g`cm>nO8aVW)l6t_
+zKJyb|hn!ukKX#aHV(XQbC(M@HSBPS^j#(93%vro;7Te|wbagH7L$meeqNirV|3~C#
+zwjM3_|G;dmfs?^wgdYe3KZ6K@5X43VLkxn!6M-xMb%j6{fGj{D3qTfN=_1GikOc^2
+z0RmY7vH*cBcu!<O=~A3@KDT{rh`l&TS5Pe(6b6A)(=A9q%3Zbo3@?b_p(CLrT#ZW7
+z-;MA|E<RMV&)^-NW#sxw4xbNtkeT#@Q*XkqhNn1yjfx|&sj8)iTNUQ+5#gO>PzqaL
+zn(l1bUY(|{^hr0qcwJWZ?4C*AyQ+LCgCglz&Gd1Z$s8YQD~;4hG|h%B**LD{ndVM9
+zYV2#+5t)$~{Fx?)qjvF0mAT~Kke5VnWD0smJp-BI<EQYOk!#2+m;FgoG&S{W-<-2o
+zbn`g^p)jZ8=oz*uaf+sR^{R6P-j};%_AU!pMK>ENZjZ-=xfdu)qC?b`TO0qGIF5I!
+za+*Gm^X+#FWPT9hA;d$7$HD=;QUV|hnIGl|0E8j)gUk<sEC5-s&}4xiQA{UFWn_gZ
+z5!w_1P1Ib-abkwWo*h@L))`oWd<nBi7wvG}(bpg<x?z|&TOBJIdhC6e%p(U`pD-(k
+z>}l|rAVt6lx3ep2XQlkUMe}LZ5-blizLiP&w95R*`VF4+^r1j%p0fYVn_5~ft@7kG
+zC0U6hkI+8Lnry|Zj*#r<{6L;m-!m|9&?ZUZ8Y7mLl{M>f_Jv}Z-RNe)=ybwQzIe7O
+z*R;E489Rx6<b}gt4rnrsO<aenJJmG&koW>WAm+4nsYh+UBiqF1M^J49G#fO{|7kX}
+zTOpgrL9WVN>?&58-G+DZ^}ju?oAC{DjrOEtYajhW8qN2W9fOh<>4a~_FjKSG=MOR(
+zu*5fM_cEr8{f!cLoxxZu@=|ctSwGk`pc8Dq7JNC+6t{kbtf1b0ua$%L$kF|w{)+a!
+zx?pMTM$@H4`ki{Acb#|F*2eK+Ke3Ceher$^f2Qqinc*FLeq5ZMO+YMF+t}EE&AaGD
+zQ(QN+rrz~3b!yc|eo3~8cNt>zj=weZzn&OdxBY%eG(W`i9!Fo+q5GDsDD?VXG2*ug
+zzwp8Su^IJ9TaQo}KgC>j-SOP6ZG|CR0uDvR<>ZU-K60tntG%kl!CB*Xo{v$f;SlO#
+zV&8!i^B!999;jA?I!vgdg4d;xG-J^bSURwDNSYyO#zFzGbYSVg(lJL^P%ORtS3Czo
+z(x@jp?F>}@=clRDtV}LjHPc0G4{_rWFZsK3X$AcW6VbVPVZ3`|gVB>dXtGpy-6lIx
+zeX}OmL^7pndzo;zwpJ4F<s5uv2TkcIZq_A+bMWee%4(71iFyNBG?1~hc-}NH!NW!P
+zfw+sAMmK$K)6QI8P&Qf8Fk?Z^5DUv*Z_8y9XY;LZA$k)A^1lQ#!(f6Pj7=~$!PtaF
+z#051r0fzz(1sn>T8jEYdp@2gHhXM|Tg#ys}p!GrPgVx8M0LTKU>4ch2%n#tde?S(%
+hB!A2i-oLU)qs^n!<p-%#y+(XMJFu4#Al(yn;XnW6wUGb-
+
+literal 0
+HcmV?d00001
+
+diff --git a/packaging/ios/TVAssets.xcassets/Contents.json b/packaging/ios/TVAssets.xcassets/Contents.json
+new file mode 100644
+index 0000000..74d6a72
+--- /dev/null
++++ b/packaging/ios/TVAssets.xcassets/Contents.json
+@@ -0,0 +1,6 @@
++{
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/packaging/ios/TVInfo.plist b/packaging/ios/TVInfo.plist
+index 988054c..dd08cb1 100644
+--- a/packaging/ios/TVInfo.plist
++++ b/packaging/ios/TVInfo.plist
+@@ -6,7 +6,7 @@
+   Universal Purchase possible), but none of the keys tvOS has no meaning for: no file sharing (an Apple TV has no
+   Files app), no orientations, no launch screen, no scene manifest (winit supplies its own UIApplicationDelegate,
+   as on iOS: naming one here would replace the delegate the game's window comes from).
+-  No icon yet: tvOS wants layered brand assets (App Icon, App Icon Small, Top Shelf), which are a separate piece.
++  The icon is TVAssets.xcassets (layered, as tvOS wants), named below the way Xcode's own tvOS plists name it.
+ -->
+ <plist version="1.0">
+ <dict>
+@@ -16,6 +16,11 @@
+ 	<string>Horizon</string>
+ 	<key>CFBundleExecutable</key>
+ 	<string>Horizon</string>
++	<key>CFBundleIcons</key>
++	<dict>
++		<key>CFBundlePrimaryIcon</key>
++		<string>App Icon</string>
++	</dict>
+ 	<key>CFBundleIdentifier</key>
+ 	<string>dev.horizon.game</string>
+ 	<key>CFBundleInfoDictionaryVersion</key>
+@@ -46,6 +51,13 @@
+ 	</dict>
+ 	<key>NSLocalNetworkUsageDescription</key>
+ 	<string>Horizon looks for a computer on your network to receive your game files from, and for friends' worlds.</string>
++	<key>TVTopShelfImage</key>
++	<dict>
++		<key>TVTopShelfPrimaryImage</key>
++		<string>Top Shelf Image</string>
++		<key>TVTopShelfPrimaryImageWide</key>
++		<string>Top Shelf Image Wide</string>
++	</dict>
+ 	<key>UIDeviceFamily</key>
+ 	<array>
+ 		<integer>3</integer>
+diff --git a/packaging/ios/project.yml b/packaging/ios/project.yml
+index 865ed92..e07b165 100644
+--- a/packaging/ios/project.yml
++++ b/packaging/ios/project.yml
+@@ -173,13 +173,14 @@ targets:
+   # workflow (.github/workflows/tvos.yml), so a tvOS failure never touches the iOS build. Same recipe as
+   # HorizonGame (Cargo builds the executable, Xcode makes the bundle), with three differences: the Rust target is
+   # tier 3, so nightly with -Zbuild-std; there is no SwiftUI launcher yet (the game logs "no launcher framework"
+-  # and goes on; the Wi-Fi import screen and Horizon's own sign-in screen are what an Apple TV has); and no icon.
++  # and goes on; the Wi-Fi import screen and Horizon's own sign-in screen are what an Apple TV has); and its own icon.
+   HorizonTV:
+     type: application
+     platform: tvOS
+     productName: HorizonTV
+     sources:
+       - path: GameShell
++      - path: TVAssets.xcassets
+     preBuildScripts:
+       - name: Build the game with Cargo
+         shell: /bin/bash
+@@ -228,8 +229,8 @@ targets:
+         TARGETED_DEVICE_FAMILY: "3"
+         TVOS_DEPLOYMENT_TARGET: "17.0"
+         EXECUTABLE_NAME: Horizon
+-        # No icon catalog in this target.
+-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
++        # The layered icon and Top Shelf images (TVAssets.xcassets, written by tools/gen_tvos_icon.py).
++        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
+ 
+ # Two schemes, so the run destination picker says which app is about to launch: the probe shell and the game.
+ schemes:
+diff --git a/third_party/winit/src/platform_impl/ios/view.rs b/third_party/winit/src/platform_impl/ios/view.rs
+index 8b2aca1..8977cc2 100644
+--- a/third_party/winit/src/platform_impl/ios/view.rs
++++ b/third_party/winit/src/platform_impl/ios/view.rs
+@@ -430,15 +430,19 @@ impl WinitView {
+         });
+         let this: Retained<Self> = unsafe { msg_send_id![super(this), initWithFrame: frame] };
+ 
+-        this.setMultipleTouchEnabled(true);
+-        let hover = unsafe {
+-            UIHoverGestureRecognizer::initWithTarget_action(
+-                mtm.alloc(),
+-                Some(&*this),
+-                Some(sel!(hardwareHover:)),
+-            )
+-        };
+-        this.addGestureRecognizer(&hover);
++        // An Apple TV has no touch screen and no pointer: multiple touch and the hover recognizer are not there
++        // (the hover class does not exist, and looking it up ends the app).
++        if !cfg!(target_os = "tvos") {
++            this.setMultipleTouchEnabled(true);
++            let hover = unsafe {
++                UIHoverGestureRecognizer::initWithTarget_action(
++                    mtm.alloc(),
++                    Some(&*this),
++                    Some(sel!(hardwareHover:)),
++                )
++            };
++            this.addGestureRecognizer(&hover);
++        }
+ 
+         if let Some(scale_factor) = window_attributes.platform_specific.scale_factor {
+             this.setContentScaleFactor(scale_factor as _);
+diff --git a/third_party/winit/src/platform_impl/ios/view_controller.rs b/third_party/winit/src/platform_impl/ios/view_controller.rs
+index 8094160..f45f67b 100644
+--- a/third_party/winit/src/platform_impl/ios/view_controller.rs
++++ b/third_party/winit/src/platform_impl/ios/view_controller.rs
+@@ -82,7 +82,7 @@ declare_class!(
+ 
+ impl WinitViewController {
+     pub(crate) fn set_pointer_locked(&self, locked: bool) {
+-        if self.ivars().pointer_locked.replace(locked) != locked {
++        if self.ivars().pointer_locked.replace(locked) != locked && !cfg!(target_os = "tvos") {
+             // Public UIKit API, available since iPadOS 14 (Horizon requires 16).
+             let _: () = unsafe { msg_send![self, setNeedsUpdateOfPrefersPointerLocked] };
+         }
+@@ -90,7 +90,10 @@ impl WinitViewController {
+ 
+     pub(crate) fn set_prefers_status_bar_hidden(&self, val: bool) {
+         self.ivars().prefers_status_bar_hidden.set(val);
+-        self.setNeedsStatusBarAppearanceUpdate();
++        // tvOS has no status bar: the selector does not exist there, and sending it ends the app.
++        if !cfg!(target_os = "tvos") {
++            self.setNeedsStatusBarAppearanceUpdate();
++        }
+     }
+ 
+     pub(crate) fn set_preferred_status_bar_style(&self, val: StatusBarStyle) {
+@@ -100,13 +103,18 @@ impl WinitViewController {
+             StatusBarStyle::DarkContent => UIStatusBarStyle::DarkContent,
+         };
+         self.ivars().preferred_status_bar_style.set(val);
+-        self.setNeedsStatusBarAppearanceUpdate();
++        // tvOS has no status bar: the selector does not exist there, and sending it ends the app.
++        if !cfg!(target_os = "tvos") {
++            self.setNeedsStatusBarAppearanceUpdate();
++        }
+     }
+ 
+     pub(crate) fn set_prefers_home_indicator_auto_hidden(&self, val: bool) {
+         self.ivars().prefers_home_indicator_auto_hidden.set(val);
+         let os_capabilities = app_state::os_capabilities();
+-        if os_capabilities.home_indicator_hidden {
++        if cfg!(target_os = "tvos") {
++            // No home indicator on an Apple TV, and no such selector.
++        } else if os_capabilities.home_indicator_hidden {
+             self.setNeedsUpdateOfHomeIndicatorAutoHidden();
+         } else {
+             os_capabilities.home_indicator_hidden_err_msg("ignoring")
+@@ -126,7 +134,9 @@ impl WinitViewController {
+             .preferred_screen_edges_deferring_system_gestures
+             .set(val);
+         let os_capabilities = app_state::os_capabilities();
+-        if os_capabilities.defer_system_gestures {
++        if cfg!(target_os = "tvos") {
++            // No screen-edge system gestures on an Apple TV, and no such selector.
++        } else if os_capabilities.defer_system_gestures {
+             self.setNeedsUpdateOfScreenEdgesDeferringSystemGestures();
+         } else {
+             os_capabilities.defer_system_gestures_err_msg("ignoring")
+@@ -156,8 +166,11 @@ impl WinitViewController {
+             }
+         };
+         self.ivars().supported_orientations.set(mask);
+-        #[allow(deprecated)]
+-        UIViewController::attemptRotationToDeviceOrientation(mtm);
++        // An Apple TV does not rotate; the class method is not there.
++        if !cfg!(target_os = "tvos") {
++            #[allow(deprecated)]
++            UIViewController::attemptRotationToDeviceOrientation(mtm);
++        }
+     }
+ 
+     pub(crate) fn new(
+diff --git a/tools/gen_tvos_icon.py b/tools/gen_tvos_icon.py
+new file mode 100644
+index 0000000..6c2d6e3
+--- /dev/null
++++ b/tools/gen_tvos_icon.py
+@@ -0,0 +1,105 @@
++#!/usr/bin/env python3
++"""Write packaging/ios/TVAssets.xcassets: Horizon's Apple TV icon, from the geometry of AppIcon-source.png.
++
++tvOS wants a layered icon so the Siri Remote can tilt it: three stacked layers (back, middle, front) for the
++App Icon in two sizes, and two flat Top Shelf images. The logo is the iPhone one redrawn at each size: the
++dark field (back), the two bars (middle), and the purple horizon line crossing them (front).
++
++    pip install pillow && python3 tools/gen_tvos_icon.py
++
++The measurements below are from the 512x512 source: bars 46 wide at x 166 and 300, spanning y 144 to 345,
++the line y 233 to 255 across the full width.
++"""
++import json
++import pathlib
++from PIL import Image, ImageDraw
++
++OUT = pathlib.Path(__file__).resolve().parent.parent / "packaging/ios/TVAssets.xcassets"
++BACK = (22, 24, 31, 255)
++BAR = (236, 237, 243, 255)
++BAR_LOWER = (236, 237, 243, 92)  # the bars' lower half: the same white at about a third
++LINE = (154, 134, 255, 255)
++SS = 4  # drawn at 4x and shrunk, for clean edges
++
++
++def layer(kind, w, h):
++    """One layer of the logo on a w x h canvas, the 512 square scaled to the height and centred."""
++    s = h / 512.0
++    ox = (w - 512 * s) / 2
++
++    def x(v):
++        return (ox + v * s) * SS
++
++    def y(v):
++        return v * s * SS
++
++    img = Image.new("RGBA", (w * SS, h * SS), BACK if kind == "back" else (0, 0, 0, 0))
++    d = ImageDraw.Draw(img)
++    if kind == "middle":
++        for bx in (166, 300):
++            d.rectangle([x(bx), y(144), x(bx + 46) - 1, y(233) - 1], fill=BAR)
++            d.rectangle([x(bx), y(256), x(bx + 46) - 1, y(345) - 1], fill=BAR_LOWER)
++    if kind == "front":
++        d.rectangle([0, y(233), w * SS, y(256) - 1], fill=LINE)
++    return img.resize((w, h), Image.LANCZOS)
++
++
++def flat(w, h):
++    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
++    for kind in ("back", "middle", "front"):
++        img = Image.alpha_composite(img, layer(kind, w, h))
++    return img.convert("RGB")
++
++
++def write(path, data):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(json.dumps(data, indent=2) + "\n")
++
++
++INFO = {"author": "xcode", "version": 1}
++
++
++def imageset(folder, name, w, h, render):
++    """folder/<name>.imageset with 1x and 2x PNGs."""
++    base = folder / f"{name}.imageset"
++    images = []
++    for scale in (1, 2):
++        file = f"{name.replace(' ', '')}@{scale}x.png"
++        base.mkdir(parents=True, exist_ok=True)
++        render(w * scale, h * scale).save(base / file, optimize=True)
++        images.append({"filename": file, "idiom": "tv", "scale": f"{scale}x"})
++    write(base / "Contents.json", {"images": images, "info": INFO})
++
++
++def stack(brand, name, w, h):
++    base = brand / f"{name}.imagestack"
++    layers = []
++    for title, kind in (("Front", "front"), ("Middle", "middle"), ("Back", "back")):
++        folder = base / f"{title}.imagestacklayer"
++        write(folder / "Contents.json", {"info": INFO})
++        imageset(folder, "Content", w, h, lambda a, b, k=kind: layer(k, a, b))
++        layers.append({"filename": f"{title}.imagestacklayer"})
++    write(base / "Contents.json", {"layers": layers, "info": INFO})
++
++
++def main():
++    write(OUT / "Contents.json", {"info": INFO})
++    brand = OUT / "App Icon & Top Shelf Image.brandassets"
++    stack(brand, "App Icon - Large", 1280, 768)
++    stack(brand, "App Icon - Small", 400, 240)
++    imageset(brand, "Top Shelf Image", 1920, 720, flat)
++    imageset(brand, "Top Shelf Image Wide", 2320, 720, flat)
++    write(brand / "Contents.json", {
++        "assets": [
++            {"filename": "App Icon - Large.imagestack", "idiom": "tv", "role": "primary-app-icon", "size": "1280x768"},
++            {"filename": "App Icon - Small.imagestack", "idiom": "tv", "role": "primary-app-icon", "size": "400x240"},
++            {"filename": "Top Shelf Image Wide.imageset", "idiom": "tv", "role": "top-shelf-image-wide", "size": "2320x720"},
++            {"filename": "Top Shelf Image.imageset", "idiom": "tv", "role": "top-shelf-image", "size": "1920x720"},
++        ],
++        "info": INFO,
++    })
++    print("wrote", OUT)
++
++
++if __name__ == "__main__":
++    main()
