@@ -197,6 +197,10 @@ targets:
             echo "Horizon: using the game Cargo already built (HORIZON_GAME_PREBUILT)."
             exit 0
           fi
+          # The `dispatch` crate asks the linker for -ldispatch on tvOS; an empty archive of that name is all it needs
+          # (tools/ci/tvos-link-stub.sh says why).
+          stub=$(bash "$SRCROOT/../../tools/ci/tvos-link-stub.sh" "$PROJECT_TEMP_DIR/horizon-tvos-link")
+          export CARGO_TARGET_AARCH64_APPLE_TVOS_RUSTFLAGS="-L native=$stub"
           # `audio` stays off until cpal is known to have a tvOS backend; `controllers` is off for the reason it
           # is off on iOS (GameController reads pads).
           cargo +nightly build -Zbuild-std=std,panic_abort --release --target "$TVOS_TARGET" -p horizon-client --no-default-features
