@@ -1,0 +1,16 @@
+diff --git a/crates/horizon-client/src/main.rs b/crates/horizon-client/src/main.rs
+index 90f8399..d257cb3 100644
+--- a/crates/horizon-client/src/main.rs
++++ b/crates/horizon-client/src/main.rs
+@@ -64,6 +64,11 @@ fn main() {
+             std::process::exit(1);
+         }
+     };
++    // The game's home (its log, crash reports and imports) defaults to `Library/Application Support`, which an
++    // iPhone lets an app write and an Apple TV does not: there the log failed to open, said so only on a stderr
++    // nobody can see, and left a blank screen with nothing to read. Make it the folder the game already works in.
++    #[cfg(target_os = "tvos")]
++    logging::set_game_home(documents.clone());
+     // `android_main` already moved into the app's files folder.
+     #[cfg(target_os = "android")]
+     let documents = std::env::current_dir().unwrap_or_default();
