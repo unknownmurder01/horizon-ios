@@ -1,0 +1,23 @@
+diff --git a/crates/horizon-client-render/src/gfx.rs b/crates/horizon-client-render/src/gfx.rs
+index a872240..22a1bc7 100644
+--- a/crates/horizon-client-render/src/gfx.rs
++++ b/crates/horizon-client-render/src/gfx.rs
+@@ -1023,7 +1023,9 @@ impl wgpu::rwh::HasDisplayHandle for WindowDisplay {
+ /// the renderer's start (#746). macOS has Metal only.
+ fn backend_order(api: GraphicsApi, os: &str, wgpu_backend: bool) -> Vec<wgpu::Backends> {
+     use wgpu::Backends;
+-    if os == "ios" {
++    // tvOS is Metal only too. Its OS name is "tvos", not "ios": left out, an Apple TV fell through to the desktop
++    // list below, asked for Vulkan and OpenGL, which Apple platforms do not have, and drew nothing.
++    if os == "ios" || os == "tvos" {
+         return vec![Backends::METAL];
+     }
+     if os == "macos" || wgpu_backend {
+@@ -6932,6 +6934,7 @@ mod tests {
+             assert_eq!(backend_order(api, "windows", true), [Backends::default()]);
+             assert_eq!(order(api, "macos"), [Backends::default()]);
+             assert_eq!(order(api, "ios"), [Backends::METAL]);
++            assert_eq!(order(api, "tvos"), [Backends::METAL]);
+         }
+     }
+     /// The second try at a backend shows the adapters wgpu hides for reporting
