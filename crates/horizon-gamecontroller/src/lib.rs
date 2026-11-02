@@ -140,6 +140,10 @@ pub fn mouse_connected() -> bool {
 pub fn clipboard_text() -> Option<String> {
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
     {
+        // tvOS has no UIPasteboard: looking the class up panics, which ended the game on the first paste.
+        if cfg!(target_os = "tvos") {
+            return None;
+        }
         let _main = objc2::MainThreadMarker::new()?;
         let board = objc2_ui_kit::UIPasteboard::generalPasteboard();
         // SAFETY: UIKit is accessed on its main thread and the retained NSString
@@ -153,7 +157,7 @@ pub fn clipboard_text() -> Option<String> {
 /// Write text copied by the game to the iOS system pasteboard.
 pub fn set_clipboard_text(text: &str) {
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
-    if let Some(_main) = objc2::MainThreadMarker::new() {
+    if let Some(_main) = objc2::MainThreadMarker::new().filter(|_| !cfg!(target_os = "tvos")) {
         let board = objc2_ui_kit::UIPasteboard::generalPasteboard();
         let text = objc2_foundation::NSString::from_str(text);
         // SAFETY: main-thread UIKit access; the string stays alive throughout

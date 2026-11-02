@@ -24,8 +24,9 @@ final class TVDiagnostics {
     private var text: UITextView?
     private var timer: Timer?
     private let opened = Date()
-    /// How long the log stays on screen.
-    private let visibleFor: TimeInterval = 180
+    /// How long the viewer stays on screen, and how much of that is the full report.
+    private let visibleFor: TimeInterval = 600
+    private let fullFor: TimeInterval = 30
 
     func start() {
         guard window == nil else { return }
@@ -42,7 +43,7 @@ final class TVDiagnostics {
         text.isUserInteractionEnabled = false
         text.backgroundColor = UIColor.black.withAlphaComponent(0.80)
         text.textColor = .white
-        text.font = UIFont.monospacedSystemFont(ofSize: 17, weight: .regular)
+        text.font = UIFont.monospacedSystemFont(ofSize: 15, weight: .regular)
         text.textContainerInset = UIEdgeInsets(top: 16, left: 20, bottom: 16, right: 20)
         controller.view.addSubview(text)
         window.rootViewController = controller
@@ -64,13 +65,36 @@ final class TVDiagnostics {
         }
         let folder = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Caches/Horizon", isDirectory: true)
+        // The full report for the first half minute, long enough to read what ended the last run; after that a
+        // two-line strip across the top, so the game can be played with the newest log lines still in view.
+        if elapsed >= fullFor, let text, let host = text.superview {
+            text.autoresizingMask = [.flexibleWidth]
+            text.frame = CGRect(x: 48, y: 12, width: host.bounds.width - 96, height: 62)
+            let lines = (Self.tail(of: folder.appendingPathComponent("logs/latest.log"), bytes: 700) ?? "")
+                .split(separator: "\n").suffix(2).joined(separator: "\n")
+            text.text = lines.isEmpty ? "Horizon: no log yet" : lines
+            return
+        }
+        var out = "Horizon on Apple TV (t+\(Int(elapsed)) s, shrinks at \(Int(fullFor)) s)  \(folder.path)\n"
+
+        // What ended the last run: Rust's crash report, if the game wrote one, and the end of that run's log (rolled
+        // into logs/<date>-<n>.log.gz when this run started). A crash the system causes, such as running out of
+        // memory, writes no report, but the last lines of that log still say what the game was doing.
+        let crash = Self.newest(in: folder.appendingPathComponent("crash-reports"), suffix: ".txt")
+        if let crash, let text = Self.tail(of: crash, bytes: 2400) {
+            out += "\n=== LAST CRASH REPORT  \(crash.lastPathComponent) ===\n\(text)\n"
+        }
+        let archive = Self.newest(in: folder.appendingPathComponent("logs"), suffix: ".log.gz")
+        if let archive, let text = Self.gunzipTail(of: archive, bytes: 2400) {
+            out += "\n=== END OF THE PREVIOUS RUN  \(archive.lastPathComponent) ===\n\(text)\n"
+        }
+
         let log = folder.appendingPathComponent("logs/latest.log")
-        var out = "Horizon on Apple TV: what the game is saying (t+\(Int(elapsed)) s, hides at \(Int(visibleFor)) s)\n"
-        out += "\(log.path)\n\n"
-        if let tail = Self.tail(of: log, bytes: 5000) {
+        out += "\n=== THIS RUN ===\n"
+        if let tail = Self.tail(of: log, bytes: 3000) {
             out += tail
         } else {
-            out += "No log file yet.\n\nIn \(folder.path):\n"
+            out += "No log file yet.\n"
             let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
             out += names.isEmpty ? "  (nothing, or the folder does not exist)\n" : names.sorted().map { "  \($0)\n" }.joined()
         }
@@ -79,6 +103,43 @@ final class TVDiagnostics {
         if let text, !out.isEmpty {
             text.scrollRangeToVisible(NSRange(location: (out as NSString).length - 1, length: 1))
         }
+    }
+
+    /// The most recently written file in `folder` whose name ends with `suffix`.
+    private static func newest(in folder: URL, suffix: String) -> URL? {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        return files
+            .filter { $0.lastPathComponent.hasSuffix(suffix) }
+            .max { a, b in
+                let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                return da < db
+            }
+    }
+
+    /// The last `bytes` of a gzip file's text. The game's log archives are plain gzip (a 10-byte header, a deflate
+    /// stream, an 8-byte trailer); Apple's zlib codec reads the stream between them.
+    private static func gunzipTail(of url: URL, bytes: Int) -> String? {
+        guard let data = try? Data(contentsOf: url), data.count > 18, data[0] == 0x1f, data[1] == 0x8b, data[2] == 8 else {
+            return nil
+        }
+        let flags = data[3]
+        var offset = 10
+        if flags & 4 != 0, data.count > offset + 2 { offset += 2 + Int(data[offset]) + Int(data[offset + 1]) << 8 }
+        for bit in [UInt8(8), UInt8(16)] where flags & bit != 0 {
+            while offset < data.count, data[offset] != 0 { offset += 1 }
+            offset += 1
+        }
+        if flags & 2 != 0 { offset += 2 }
+        guard offset < data.count - 8 else { return nil }
+        let body = data.subdata(in: offset..<(data.count - 8))
+        guard let raw = try? (body as NSData).decompressed(using: .zlib) as Data else { return nil }
+        var text = String(decoding: raw.suffix(bytes), as: UTF8.self)
+        if raw.count > bytes, let newline = text.firstIndex(of: "\n") {
+            text = String(text[text.index(after: newline)...])
+        }
+        return text.isEmpty ? nil : text
     }
 
     /// The last `bytes` of `url` as text, from the start of a whole line; nil when it can't be read.
