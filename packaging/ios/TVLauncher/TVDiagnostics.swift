@@ -38,8 +38,7 @@ final class TVDiagnostics {
         controller.view.backgroundColor = .clear
         let text = UITextView(frame: controller.view.bounds.insetBy(dx: 48, dy: 32))
         text.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        text.isEditable = false
-        text.isSelectable = false
+        // No isEditable or isSelectable: tvOS has neither (a text view there is read-only, and that is all this is).
         text.isUserInteractionEnabled = false
         text.backgroundColor = UIColor.black.withAlphaComponent(0.80)
         text.textColor = .white
